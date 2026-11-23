@@ -399,7 +399,7 @@ fun SearchScreen(
 @Composable
 fun JourneyResultsScreen(
     modifier: Modifier, origin: Stop?, destination: Stop?, results: List<JourneyOption>,
-    selectedRouteType: String?, selectedTimeWindow: String?, onRouteTypeChange: (Int?) -> Unit, onTimeWindowChange: (String?) -> Unit, favorites: Set<String>, toggleFavorite: (String) -> Unit,
+    selectedRouteType: String?, selectedTimeWindow: String?, onRouteTypeChange: (String?) -> Unit, onTimeWindowChange: (String?) -> Unit, favorites: Set<String>, toggleFavorite: (String) -> Unit,
     onSelectService: (JourneyOption) -> Unit
 ) {
     var departureSort by remember { mutableStateOf("Earliest first") }
@@ -634,10 +634,10 @@ private fun apsrtcServiceClass(route: BusRoute): String {
         Regex("\\bsuper\\s*luxury\\b").containsMatchIn(name) -> "Super Luxury"
         Regex("\\bultra\\s*deluxe\\b").containsMatchIn(name) -> "Ultra Deluxe"
         Regex("\\b(deluxe)\\b").containsMatchIn(name) -> "Deluxe"
-        Regex("\\b(express)\\b").containsMatchIn(name) -> "Express"
         Regex("\\b(palle\\s*velugu|pallevelugu|pv)\\b").containsMatchIn(name) -> "Palle Velugu"
         Regex("\\b(city\\s*ordinary|ordinary)\\b").containsMatchIn(name) -> "City Ordinary"
         Regex("\\bmetro\\s*express\\b").containsMatchIn(name) -> "Metro Express"
+        Regex("\\b(express)\\b").containsMatchIn(name) -> "Express"
         Regex("\\b(semi\\s*luxury)\\b").containsMatchIn(name) -> "Semi Luxury"
         Regex("\\b(ac)\\b").containsMatchIn(name) -> "AC Service"
         else -> "Other"
