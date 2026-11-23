@@ -14,6 +14,7 @@ import java.util.zip.ZipInputStream
 
 data class Stop(val id: String, val name: String, val lat: Double, val lon: Double)
 data class BusRoute(val id: String, val shortName: String, val longName: String, val routeType: Int = 3)
+data class JourneyOption(val route: BusRoute, val departure: String, val arrival: String, val durationMinutes: Int, val intermediateStops: List<String>, val departureMinutes: Int, val arrivalMinutes: Int)
 data class LiveBus(val id: String, val label: String, val routeId: String, val tripId: String, val lat: Double, val lon: Double, val bearing: Double, val timestamp: Long = 0L, val speed: Double = 0.0, val routeName: String = "", val routeLongName: String = "", val startTime: String = "")
 data class Arrival(val tripId: String, val routeId: String, val stopId: String, val arrivalEpoch: Long?, val delay: Int?)
 
@@ -104,38 +105,82 @@ class TransitRepository(private val context: Context) {
         return out
     }
 
-    suspend fun findRoutes(origin: Stop, destination: Stop, routes: List<BusRoute>): List<BusRoute> = withContext(Dispatchers.IO) {
+    suspend fun findJourneys(origin: Stop, destination: Stop, routes: List<BusRoute>, stops: List<Stop>): List<JourneyOption> = withContext(Dispatchers.IO) {
         val cache = java.io.File(context.cacheDir, "apsrtc.zip")
+        if (!cache.exists() || cache.length() == 0L) error("APSRTC timetable is not cached yet. Refresh route data and try again.")
+
         val tripRoutes = HashMap<String, String>()
         ZipInputStream(cache.inputStream().buffered()).use { zip ->
             while (true) {
-                val e = zip.nextEntry ?: break
-                if (e.name == "trips.txt") readCsv(zip) { row ->
-                    val trip = row["trip_id"].orEmpty(); val route = row["route_id"].orEmpty()
-                    if (trip.isNotBlank()) tripRoutes[trip] = route
+                val entry = zip.nextEntry ?: break
+                if (entry.name.substringAfterLast('/') == "trips.txt") readCsv(zip) { row ->
+                    val trip = row["trip_id"].orEmpty()
+                    val route = row["route_id"].orEmpty()
+                    if (trip.isNotBlank() && route.isNotBlank()) tripRoutes[trip] = route
                 }
                 zip.closeEntry()
             }
         }
-        val originSeq = HashMap<String, Int>()
-        val matches = LinkedHashSet<String>()
+        val routeById = routes.associateBy { it.id }
+        val stopNames = stops.associate { it.id to it.name }
+        fun toMinutes(value: String): Int? {
+            val parts = value.split(":")
+            if (parts.size != 3) return null
+            val h = parts[0].toIntOrNull() ?: return null
+            val m = parts[1].toIntOrNull() ?: return null
+            val s = parts[2].toIntOrNull() ?: return null
+            return h * 60 + m + if (s >= 30) 1 else 0
+        }
+        val journeys = mutableListOf<JourneyOption>()
+        data class TimedStop(val id: String, val sequence: Int, val arrival: String, val departure: String)
+        fun inspectTrip(tripId: String, rows: List<TimedStop>) {
+            if (rows.isEmpty()) return
+            val ordered = rows.sortedBy { it.sequence }
+            val fromIndex = ordered.indexOfFirst { it.id == origin.id }
+            if (fromIndex < 0) return
+            val toIndex = (fromIndex + 1 until ordered.size).firstOrNull { ordered[it].id == destination.id } ?: return
+            val from = ordered[fromIndex]
+            val to = ordered[toIndex]
+            val depText = from.departure.ifBlank { from.arrival }
+            val arrText = to.arrival.ifBlank { to.departure }
+            val dep = toMinutes(depText) ?: return
+            var arr = toMinutes(arrText) ?: return
+            if (arr < dep) arr += 24 * 60
+            val routeId = tripRoutes[tripId] ?: return
+            val route = routeById[routeId] ?: return
+            val middle = ordered.subList(fromIndex + 1, toIndex).mapNotNull { stopNames[it.id] }.distinct()
+            journeys += JourneyOption(route, depText, arrText, (arr - dep).coerceAtLeast(0), middle, dep, arr)
+        }
         ZipInputStream(cache.inputStream().buffered()).use { zip ->
             while (true) {
-                val e = zip.nextEntry ?: break
-                if (e.name == "stop_times.txt") readCsv(zip) { row ->
-                    val trip = row["trip_id"].orEmpty()
-                    val stop = row["stop_id"].orEmpty()
-                    val seq = row["stop_sequence"]?.toIntOrNull() ?: 0
-                    if (stop == origin.id) originSeq[trip] = seq
-                    if (stop == destination.id) {
-                        val start = originSeq[trip]
-                        if (start != null && seq > start) tripRoutes[trip]?.let(matches::add)
+                val entry = zip.nextEntry ?: break
+                if (entry.name.substringAfterLast('/') == "stop_times.txt") {
+                    var currentTrip = ""
+                    val group = mutableListOf<TimedStop>()
+                    fun flush() {
+                        if (currentTrip.isNotBlank()) inspectTrip(currentTrip, group)
+                        group.clear()
                     }
+                    readCsv(zip) { row ->
+                        val trip = row["trip_id"].orEmpty()
+                        if (trip.isNotBlank()) {
+                            if (currentTrip.isNotBlank() && trip != currentTrip) flush()
+                            currentTrip = trip
+                            group += TimedStop(
+                                row["stop_id"].orEmpty(),
+                                row["stop_sequence"]?.toIntOrNull() ?: 0,
+                                row["arrival_time"].orEmpty(),
+                                row["departure_time"].orEmpty()
+                            )
+                        }
+                    }
+                    flush()
                 }
                 zip.closeEntry()
             }
         }
-        matches.mapNotNull { id -> routes.firstOrNull { it.id == id } }.distinctBy { it.id }.take(30)
+        journeys.distinctBy { "${it.route.id}|${it.departure}|${it.arrival}|${it.intermediateStops.joinToString()}" }
+            .sortedBy { it.departureMinutes }.take(100)
     }
 
     suspend fun status(): String = withContext(Dispatchers.IO) { get("$base/apsrtc/rt/status.json") }
