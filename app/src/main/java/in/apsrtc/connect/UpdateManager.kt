@@ -16,7 +16,7 @@ import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
 
-data class AppUpdate(val version: String, val downloadUrl: String, val notes: String)
+data class AppUpdate(val version: String, val downloadUrl: String, val notes: String, val sizeBytes: Long)
 
 object UpdateManager {
     private val client = OkHttpClient.Builder()
@@ -36,16 +36,18 @@ object UpdateManager {
             val tag = json.optString("tag_name").removePrefix("v")
             val assetList = json.optJSONArray("assets") ?: throw IllegalStateException("No APK attached to the latest release")
             var apkUrl = ""
+            var apkSize = 0L
             for (i in 0 until assetList.length()) {
                 val asset = assetList.getJSONObject(i)
                 if (asset.optString("name").endsWith(".apk", true)) {
                     apkUrl = asset.optString("browser_download_url")
+                    apkSize = asset.optLong("size", 0L)
                     break
                 }
             }
             if (apkUrl.isBlank()) throw IllegalStateException("Latest release does not contain an APK yet")
             if (compareVersions(tag, BuildConfig.VERSION_NAME) <= 0) null
-            else AppUpdate(tag, apkUrl, json.optString("body"))
+            else AppUpdate(tag, apkUrl, json.optString("body"), apkSize)
         }
     }
 
@@ -59,17 +61,24 @@ object UpdateManager {
         return 0
     }
 
-    fun download(context: Context, url: String): Long {
+    private fun apkFile(context: Context, version: String): File = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "apsrtc-connect-$version.apk")
+
+    fun cachedApk(context: Context, update: AppUpdate): File? {
+        val file = apkFile(context, update.version)
+        return file.takeIf { it.exists() && it.length() > 0L && (update.sizeBytes <= 0L || it.length() == update.sizeBytes) }
+    }
+
+    fun download(context: Context, update: AppUpdate): Long {
         val request = DownloadManager.Request(Uri.parse(url))
             .setTitle("APSRTC Connect update")
             .setDescription("Downloading the latest APSRTC Connect APK")
             .setMimeType("application/vnd.android.package-archive")
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, "apsrtc-connect-update.apk")
+            .setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, "apsrtc-connect-${update.version}.apk")
         return (context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
     }
 
-    suspend fun waitForDownload(context: Context, id: Long): File = withContext(Dispatchers.IO) {
+    suspend fun waitForDownload(context: Context, id: Long, version: String): File = withContext(Dispatchers.IO) {
         val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         repeat(300) {
             val query = DownloadManager.Query().setFilterById(id)
@@ -77,7 +86,7 @@ object UpdateManager {
                 if (cursor.moveToFirst()) {
                     when (cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))) {
                         DownloadManager.STATUS_SUCCESSFUL -> {
-                            val file = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "apsrtc-connect-update.apk")
+                            val file = apkFile(context, version)
                             if (file.exists() && file.length() > 0) return@withContext file
                             throw IllegalStateException("Downloaded APK could not be found")
                         }
