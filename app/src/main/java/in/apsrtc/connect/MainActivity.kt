@@ -153,7 +153,7 @@ fun APSRTCApp() {
             when (tab) {
                 0 -> SearchScreen(
                     Modifier.padding(padding), telugu, loading, error, stops, originText, destinationText,
-                    { originText = it; origin = null }, { destinationText = it; destination = null },
+                    { originText = it; origin = null; routeResults = emptyList(); routeSearchError = "" }, { destinationText = it; destination = null; routeResults = emptyList(); routeSearchError = "" },
                     { origin = it; originText = it.name }, { destination = it; destinationText = it.name },
                     origin, destination, routeResults, searchingRoutes, routeSearchError,
                     { scope.launch {
@@ -191,6 +191,9 @@ fun SearchScreen(
 ) {
     var busType by remember { mutableStateOf("All") }
     var sortBy by remember { mutableStateOf("Departure") }
+    LaunchedEffect(origin?.id, destination?.id) {
+        if (origin != null && destination != null && origin.id != destination.id) search()
+    }
     val visible = results.filter { item ->
         val label = (item.route.shortName + " " + item.route.longName).lowercase()
         when (busType) {
