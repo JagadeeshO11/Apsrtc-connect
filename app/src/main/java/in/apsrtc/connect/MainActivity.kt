@@ -63,6 +63,7 @@ fun APSRTCApp() {
     var selectedJourney by remember { mutableStateOf<JourneyOption?>(null) }
     var showRouteFilters by remember { mutableStateOf(false) }
     var selectedGtfsRouteType by remember { mutableStateOf<Int?>(null) }
+    var selectedTimeWindow by remember { mutableStateOf<String?>(null) }
     var stops by remember { mutableStateOf<List<Stop>>(emptyList()) }
     var routes by remember { mutableStateOf<List<BusRoute>>(emptyList()) }
     var buses by remember { mutableStateOf(repo.cachedLiveBuses()) }
@@ -200,7 +201,7 @@ fun APSRTCApp() {
             if (serviceDetailPage && selectedJourney != null) {
                 ServiceDetailScreen(Modifier.padding(padding), selectedJourney!!)
             } else if (resultsPage) {
-                JourneyResultsScreen(Modifier.padding(padding), origin, destination, routeResults, selectedGtfsRouteType, favorites,
+                JourneyResultsScreen(Modifier.padding(padding), origin, destination, routeResults, selectedGtfsRouteType, selectedTimeWindow, favorites,
                     { id -> favorites = repo.toggleFavorite(id) },
                     { journey -> selectedJourney = journey; serviceDetailPage = true })
             } else when (tab) {
@@ -209,7 +210,7 @@ fun APSRTCApp() {
                     { originText = it; origin = null; routeResults = emptyList(); routeSearchError = "" }, { destinationText = it; destination = null; routeResults = emptyList(); routeSearchError = "" },
                     { origin = it; originText = it.name }, { destination = it; destinationText = it.name },
                     origin, destination, routeResults, searchingRoutes, routeSearchError,
-                    { resultsPage = true; selectedGtfsRouteType = null; scope.launch {
+                    { resultsPage = true; selectedGtfsRouteType = null; selectedTimeWindow = null; scope.launch {
                         val fromStop = origin
                         val toStop = destination
                         if (fromStop == null || toStop == null) { routeSearchError = "Choose both stops from the suggestions."; return@launch }
@@ -358,10 +359,21 @@ fun SearchScreen(
 @Composable
 fun JourneyResultsScreen(
     modifier: Modifier, origin: Stop?, destination: Stop?, results: List<JourneyOption>,
-    selectedRouteType: Int?, favorites: Set<String>, toggleFavorite: (String) -> Unit,
+    selectedRouteType: Int?, selectedTimeWindow: String?, favorites: Set<String>, toggleFavorite: (String) -> Unit,
     onSelectService: (JourneyOption) -> Unit
 ) {
-    val filtered = results.filter { selectedRouteType == null || it.route.routeType == selectedRouteType }
+    val filtered = results.filter { journey ->
+        val typeMatch = selectedRouteType == null || journey.route.routeType == selectedRouteType
+        val hour = (((journey.departureMinutes % 1440) + 1440) % 1440) / 60
+        val timeMatch = when (selectedTimeWindow) {
+            "00:00–06:00" -> hour in 0..5
+            "06:00–12:00" -> hour in 6..11
+            "12:00–18:00" -> hour in 12..17
+            "18:00–24:00" -> hour in 18..23
+            else -> true
+        }
+        typeMatch && timeMatch
+    }
     LazyColumn(modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
         item {
             Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
