@@ -297,9 +297,6 @@ fun SearchScreen(
     favorites: Set<String>, toggleFavorite: (String) -> Unit,
     nearbyStops: List<Stop>, findNearby: () -> Unit, error: String, retryStops: () -> Unit
 ) {
-    LaunchedEffect(origin?.id, destination?.id) {
-        if (origin != null && destination != null && origin.id != destination.id) search()
-    }
     val visible = results.let { list -> when (sortBy) {
         "Arrival" -> list.sortedBy { it.arrivalMinutes }
         "Shortest" -> list.sortedBy { it.durationMinutes }
