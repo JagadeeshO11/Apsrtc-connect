@@ -110,9 +110,12 @@ fun APSRTCApp() {
     }
 
     MaterialTheme(colorScheme = lightColorScheme(
-        primary = androidx.compose.ui.graphics.Color(0xFFB3261E),
-        secondary = androidx.compose.ui.graphics.Color(0xFF315C8A),
-        background = androidx.compose.ui.graphics.Color(0xFFF7F7FB)
+        primary = androidx.compose.ui.graphics.Color(0xFF123B43),
+        secondary = androidx.compose.ui.graphics.Color(0xFFE09F3E),
+        tertiary = androidx.compose.ui.graphics.Color(0xFF007F86),
+        primaryContainer = androidx.compose.ui.graphics.Color(0xFFD8ECE9),
+        secondaryContainer = androidx.compose.ui.graphics.Color(0xFFFFEBC7),
+        background = androidx.compose.ui.graphics.Color(0xFFF4F7F5)
     )) {
         Scaffold(
             topBar = {
@@ -120,7 +123,7 @@ fun APSRTCApp() {
                     title = {
                         Column {
                             Text("APSRTC Connect", fontWeight = FontWeight.Bold)
-                            Text(if (telugu) "ఆంధ్రప్రదేశ్ రాష్ట్ర రోడ్డు రవాణా" else "Andhra Pradesh bus services", style = MaterialTheme.typography.labelSmall)
+                            Text(if (telugu) "ప్రత్యక్ష బస్సులు • స్మార్ట్ ప్రయాణం" else "Live network • Smarter journeys", style = MaterialTheme.typography.labelSmall)
                         }
                     },
                     actions = {
