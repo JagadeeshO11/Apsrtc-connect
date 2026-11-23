@@ -566,7 +566,17 @@ fun StopAutocomplete(label: String, value: String, stops: List<Stop>, onValue: (
         OutlinedTextField(value, { typed -> onValue(typed); expanded = true }, Modifier.fillMaxWidth().menuAnchor(), label = { Text(label) }, singleLine = true,
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) })
         ExposedDropdownMenu(expanded = expanded && matches.isNotEmpty(), onDismissRequest = { expanded = false }) {
-            matches.forEach { stop -> DropdownMenuItem(text = { Text(stop.name) }, onClick = { onSelect(stop); expanded = false }) }
+            matches.forEach { stop ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(stop.name)
+                            Text("stop_id: ${stop.id}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    },
+                    onClick = { onSelect(stop); expanded = false }
+                )
+            }
         }
     }
 }
@@ -620,7 +630,7 @@ fun LiveScreen(modifier: Modifier, status: String, buses: List<LiveBus>, arrival
                     val time = arrival.arrivalEpoch?.let { SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(it * 1000)) } ?: "Time unavailable"
                     ListItem(
                         headlineContent = { Text(stopName) },
-                        supportingContent = { Text("Route ${arrival.routeId.ifBlank { "unmatched" }} • ${time}") },
+                        supportingContent = { Text("Route ${arrival.routeId.ifBlank { "unmatched" }} • stop_id: ${arrival.stopId} • ${time}") },
                         trailingContent = { arrival.delay?.let { Text(if (it >= 0) "+${it / 60}m" else "${it / 60}m") } }
                     )
                     HorizontalDivider()
@@ -673,7 +683,7 @@ fun MapScreen(
             else -> list.sortedByDescending { it.timestamp }
         }
     }
-    val visibleBuses = if (selected != null) filtered.filter { it.id == selected.id } else filtered
+    val visibleBuses = if (selected != null) listOf(filtered.firstOrNull { it.id == selected.id } ?: selected) else filtered
     Column(modifier.fillMaxSize()) {
         Text("Live APSRTC buses • interactive map", Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         Text(if (selected != null) "Selected trip only • ${selected.tripId.ifBlank { "Trip ID unavailable" }}" else "All available live vehicle positions • select a bus to isolate its trip", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
