@@ -94,6 +94,7 @@ fun APSRTCApp() {
     var lastUpdated by remember { mutableStateOf(context.getSharedPreferences("apsrtc_connect", android.content.Context.MODE_PRIVATE).getLong("last_live_success", 0L)) }
     var favorites by remember { mutableStateOf(repo.favorites()) }
     var selectedBus by remember { mutableStateOf<LiveBus?>(null) }
+    var selectedTripStops by remember { mutableStateOf<List<Stop>>(emptyList()) }
     var updateInfo by remember { mutableStateOf<AppUpdate?>(null) }
     var downloadedUpdate by remember { mutableStateOf<java.io.File?>(null) }
     var updateDialogVisible by remember { mutableStateOf(false) }
@@ -259,7 +260,13 @@ fun APSRTCApp() {
                         finally { loading = false }
                     } }
                 )
-                1 -> MapScreen(Modifier.padding(padding), buses, routes, origin, destination, selectedBus, lastUpdated) { selectedBus = it }
+                1 -> MapScreen(Modifier.padding(padding), buses, routes, origin, destination, selectedBus, selectedTripStops, lastUpdated) { bus ->
+                    selectedBus = bus
+                    selectedTripStops = emptyList()
+                    if (bus != null) scope.launch {
+                        selectedTripStops = runCatching { repo.tripStops(bus.tripId, stops) }.getOrDefault(emptyList())
+                    }
+                }
                 2 -> LiveScreen(Modifier.padding(padding), status, buses, arrivals, stops, telugu, lastUpdated, error)
                 else -> FavoritesScreen(Modifier.padding(padding), favorites, routes, telugu) { id -> favorites = repo.toggleFavorite(id) }
             }
@@ -632,14 +639,15 @@ private fun apsrtcServiceClass(route: BusRoute): String {
         Regex("\\bamaravathi\\b|\\bamaravati\\b").containsMatchIn(name) -> "Amaravathi"
         Regex("\\bvennela\\b").containsMatchIn(name) -> "Vennela"
         Regex("\\bsuper\\s*luxury\\b").containsMatchIn(name) -> "Super Luxury"
+        Regex("\\bultra\\s*palle\\s*velugu\\b|\\bultra\\s*pallevelugu\\b").containsMatchIn(name) -> "Ultra Palle Velugu"
+        Regex("\\bpalle\\s*velugu\\b|\\bpallevelugu\\b|\\bpv\\b").containsMatchIn(name) -> "Palle Velugu"
         Regex("\\bultra\\s*deluxe\\b").containsMatchIn(name) -> "Ultra Deluxe"
-        Regex("\\b(deluxe)\\b").containsMatchIn(name) -> "Deluxe"
-        Regex("\\b(palle\\s*velugu|pallevelugu|pv)\\b").containsMatchIn(name) -> "Palle Velugu"
-        Regex("\\b(city\\s*ordinary|ordinary)\\b").containsMatchIn(name) -> "City Ordinary"
+        Regex("\\bdeluxe\\b").containsMatchIn(name) -> "Deluxe"
         Regex("\\bmetro\\s*express\\b").containsMatchIn(name) -> "Metro Express"
-        Regex("\\b(express)\\b").containsMatchIn(name) -> "Express"
-        Regex("\\b(semi\\s*luxury)\\b").containsMatchIn(name) -> "Semi Luxury"
-        Regex("\\b(ac)\\b").containsMatchIn(name) -> "AC Service"
+        Regex("\\bexpress\\b").containsMatchIn(name) -> "Express"
+        Regex("\\bsemi\\s*luxury\\b").containsMatchIn(name) -> "Semi Luxury"
+        Regex("\\b(city\\s*ordinary|ordinary)\\b").containsMatchIn(name) -> "City Ordinary"
+        Regex("\\bac\\b").containsMatchIn(name) -> "AC Service"
         else -> "Other"
     }
 }
@@ -648,11 +656,13 @@ private fun apsrtcServiceClass(route: BusRoute): String {
 @Composable
 fun MapScreen(
     modifier: Modifier, buses: List<LiveBus>, routes: List<BusRoute>,
-    origin: Stop?, destination: Stop?, selected: LiveBus?, lastUpdated: Long, onSelect: (LiveBus?) -> Unit
+    origin: Stop?, destination: Stop?, selected: LiveBus?, selectedTripStops: List<Stop>,
+    lastUpdated: Long, onSelect: (LiveBus?) -> Unit
 ) {
     var busType by remember { mutableStateOf("All services") }
     var sortBy by remember { mutableStateOf("Latest update") }
     val routeById = remember(routes) { routes.associateBy { it.id } }
+    val availableTypes = buses.mapNotNull { bus -> routeById[bus.routeId]?.let { apsrtcServiceClass(it) } }.distinct().sorted()
     val filtered = buses.filter { bus ->
         val serviceClass = routeById[bus.routeId]?.let { apsrtcServiceClass(it) } ?: "Other"
         busType == "All services" || serviceClass == busType
@@ -663,13 +673,17 @@ fun MapScreen(
             else -> list.sortedByDescending { it.timestamp }
         }
     }
+    val visibleBuses = if (selected != null) filtered.filter { it.id == selected.id } else filtered
     Column(modifier.fillMaxSize()) {
         Text("Live APSRTC buses • interactive map", Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Text(if (origin != null && destination != null) "Journey: ${origin.name} → ${destination.name} • endpoints only" else "All available live vehicle positions", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
+        Text(if (selected != null) "Selected trip only • ${selected.tripId.ifBlank { "Trip ID unavailable" }}" else "All available live vehicle positions • select a bus to isolate its trip", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
         Text(if (lastUpdated > 0L) "GPS last updated ${SimpleDateFormat("dd MMM, hh:mm:ss a", Locale.getDefault()).format(Date(lastUpdated * 1000))}" else "Waiting for first GPS timestamp", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            listOf("All services") + routes.map { apsrtcServiceClass(it) }.distinct().sorted().forEach { type ->
-                FilterChip(selected = busType == type, onClick = { busType = type }, label = { Text(type) }, modifier = Modifier.padding(end = 6.dp))
+            FilterChip(selected = busType == "All services", onClick = { busType = "All services" }, label = { Text("All services • ${buses.size}") }, modifier = Modifier.padding(end = 6.dp))
+            availableTypes.forEach { type ->
+                val busCount = buses.count { bus -> routeById[bus.routeId]?.let { apsrtcServiceClass(it) } == type }
+                val routeCount = routes.count { apsrtcServiceClass(it) == type }
+                FilterChip(selected = busType == type, onClick = { busType = type }, label = { Text("$type • $busCount buses / $routeCount routes") }, modifier = Modifier.padding(end = 6.dp))
             }
         }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -693,25 +707,25 @@ fun MapScreen(
                     addJavascriptInterface(object {
                         @android.webkit.JavascriptInterface
                         fun selectBus(index: Int) {
-                            this@apply.post { onSelect(filtered.getOrNull(index)) }
+                            this@apply.post { onSelect(visibleBuses.getOrNull(index)) }
                         }
                     }, "AndroidBus")
                     webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean =
                             request?.isForMainFrame == true
                     }
-                    val html = mapHtml(filtered, origin, destination, selected)
+                    val html = mapHtml(visibleBuses, origin, destination, selected, selectedTripStops)
                     tag = html.hashCode()
                     loadDataWithBaseURL("https://www.openstreetmap.org", html, "text/html", "UTF-8", null)
                 }
             },
             update = { view ->
-                val html = mapHtml(filtered, origin, destination, selected)
+                val html = mapHtml(visibleBuses, origin, destination, selected, selectedTripStops)
                 if (view.tag != html.hashCode()) {
                     view.addJavascriptInterface(object {
                         @android.webkit.JavascriptInterface
                         fun selectBus(index: Int) {
-                            view.post { onSelect(filtered.getOrNull(index)) }
+                            view.post { onSelect(visibleBuses.getOrNull(index)) }
                         }
                     }, "AndroidBus")
                     view.tag = html.hashCode()
@@ -724,44 +738,61 @@ fun MapScreen(
             Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
                 ListItem(
                     headlineContent = { Text(selected.label) },
-                    supportingContent = { Text("${route?.shortName ?: selected.routeId.ifBlank { "Route unavailable" }} • ${if (route?.routeType == 3) "GTFS bus" else "GTFS type ${route?.routeType ?: "unknown"}"} • ${if (selected.timestamp > 0) SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(selected.timestamp * 1000)) else "Time unavailable"}") },
-                    trailingContent = { Text(if (selected.speed > 0) "${"%.0f".format(selected.speed * 3.6)} km/h" else "GPS") }
+                    supportingContent = { Text("Route: ${route?.shortName ?: selected.routeId.ifBlank { "Unavailable" }} • Trip ID: ${selected.tripId.ifBlank { "Unavailable" }} • ${selectedTripStops.size} GTFS stops") },
+                    trailingContent = { IconButton(onClick = { onSelect(null) }) { Icon(Icons.Default.Close, "Show all buses") } }
                 )
             }
-        }
-        if (filtered.isNotEmpty()) {
-            Text("Tap a bus marker or a row to inspect it", Modifier.padding(start = 16.dp, top = 6.dp), style = MaterialTheme.typography.labelMedium)
-            LazyColumn(Modifier.heightIn(max = 150.dp).fillMaxWidth()) {
-                items(filtered.take(80)) { bus ->
+            if (selectedTripStops.isEmpty()) {
+                Text("No matching GTFS stop sequence was found for this live trip ID.", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall)
+            } else {
+                Text("Stops on selected trip", Modifier.padding(start = 16.dp, top = 4.dp), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                LazyColumn(Modifier.heightIn(max = 145.dp).fillMaxWidth()) {
+                    items(selectedTripStops) { stop ->
+                        ListItem(
+                            headlineContent = { Text(stop.name) },
+                            supportingContent = { Text("stop_id: ${stop.id}") },
+                            leadingContent = { Icon(Icons.Default.Place, null) }
+                        )
+                        HorizontalDivider()
+                    }
+                }
+            }
+        } else if (visibleBuses.isNotEmpty()) {
+            Text("Tap a bus marker or row to show only that bus and its trip stops", Modifier.padding(start = 16.dp, top = 6.dp), style = MaterialTheme.typography.labelMedium)
+            LazyColumn(Modifier.heightIn(max = 180.dp).fillMaxWidth()) {
+                items(visibleBuses.take(80)) { bus ->
                     val route = routeById[bus.routeId]
                     ListItem(
                         modifier = Modifier.clickable { onSelect(bus) },
                         headlineContent = { Text(bus.label) },
-                        supportingContent = { Text("${route?.shortName ?: bus.routeId.ifBlank { "Route not matched" }} • ${if (bus.speed > 0) "${"%.0f".format(bus.speed * 3.6)} km/h" else "Speed unavailable"}") },
-                        trailingContent = { if (selected == bus) Icon(Icons.Default.CheckCircle, "Selected bus", tint = MaterialTheme.colorScheme.primary) else Icon(Icons.Default.ChevronRight, null) }
+                        supportingContent = { Text("${route?.shortName ?: bus.routeId.ifBlank { "Route not matched" }} • Trip: ${bus.tripId.ifBlank { "unknown" }} • ${if (bus.speed > 0) "${"%.0f".format(bus.speed * 3.6)} km/h" else "Speed unavailable"}") },
+                        trailingContent = { Icon(Icons.Default.ChevronRight, null) }
                     )
                     HorizontalDivider()
                 }
             }
         } else {
-            Text("No live vehicle positions in this filter. Try All or refresh the feed.", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
+            Text("No live vehicle positions in this filter. Try All or clear the selected bus.", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
         }
-        Text("${filtered.size} / ${buses.size} live positions • Auto-refresh every 65 seconds • © OpenStreetMap", Modifier.padding(12.dp), style = MaterialTheme.typography.labelSmall)
+        Text("${visibleBuses.size} shown / ${buses.size} live positions • Auto-refresh every 65 seconds • © OpenStreetMap", Modifier.padding(12.dp), style = MaterialTheme.typography.labelSmall)
     }
 }
 
-private fun mapHtml(buses: List<LiveBus>, origin: Stop?, destination: Stop?, selected: LiveBus?): String {
+private fun mapHtml(buses: List<LiveBus>, origin: Stop?, destination: Stop?, selected: LiveBus?, tripStops: List<Stop>): String {
     val gson = com.google.gson.Gson()
     val points = buses.map { bus -> mapOf(
         "lat" to bus.lat, "lon" to bus.lon, "label" to bus.label,
-        "route" to bus.routeId, "speed" to bus.speed, "time" to bus.timestamp
+        "route" to bus.routeId, "tripId" to bus.tripId, "speed" to bus.speed, "time" to bus.timestamp
     ) }
     val markers = gson.toJson(points)
     val journey = gson.toJson(listOfNotNull(
-        origin?.takeIf { it.lat in -90.0..90.0 && it.lon in -180.0..180.0 && (it.lat != 0.0 || it.lon != 0.0) }?.let { listOf(it.lat, it.lon, it.name, "From") },
-        destination?.takeIf { it.lat in -90.0..90.0 && it.lon in -180.0..180.0 && (it.lat != 0.0 || it.lon != 0.0) }?.let { listOf(it.lat, it.lon, it.name, "To") }
+        origin?.takeIf { it.lat in -90.0..90.0 && it.lon in -180.0..180.0 && (it.lat != 0.0 || it.lon != 0.0) }?.let { listOf(it.lat, it.lon, it.name, it.id, "From") },
+        destination?.takeIf { it.lat in -90.0..90.0 && it.lon in -180.0..180.0 && (it.lat != 0.0 || it.lon != 0.0) }?.let { listOf(it.lat, it.lon, it.name, it.id, "To") }
     ))
-    val selectedLabel = gson.toJson(selected?.label ?: "")
+    val stopsJson = gson.toJson(tripStops.filter { it.lat in -90.0..90.0 && it.lon in -180.0..180.0 && (it.lat != 0.0 || it.lon != 0.0) }.mapIndexed { index, stop ->
+        mapOf("lat" to stop.lat, "lon" to stop.lon, "name" to stop.name, "id" to stop.id, "sequence" to index + 1)
+    })
+    val selectedTrip = gson.toJson(selected?.tripId.orEmpty())
     return """<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -770,9 +801,10 @@ private fun mapHtml(buses: List<LiveBus>, origin: Stop?, destination: Stop?, sel
       .bus-dot{background:#b3261e;border:2px solid white;border-radius:50%;width:14px;height:14px;box-shadow:0 1px 6px #555}
       .bus-dot.selected{background:#087f5b;width:19px;height:19px;border:3px solid white}
       .endpoint{background:#315c8a;border:2px solid white;border-radius:50%;width:16px;height:16px}
+      .trip-stop{background:#e09f3e;border:2px solid white;border-radius:50%;width:12px;height:12px}
       .map-note{position:absolute;z-index:500;bottom:12px;left:12px;background:#fff;padding:7px 10px;border-radius:9px;font:12px sans-serif;box-shadow:0 1px 5px #777}
     </style></head><body><div id="map"></div><div class="map-note" id="note">Loading map…</div><script>
-    const pts=$markers, journey=$journey, selectedLabel=$selectedLabel;
+    const pts=$markers, journey=$journey, stops=$stopsJson, selectedTrip=$selectedTrip;
     const map=L.map('map',{zoomControl:true}).setView([16.5,80.6],7);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
     const bounds=[];
@@ -780,21 +812,29 @@ private fun mapHtml(buses: List<LiveBus>, origin: Stop?, destination: Stop?, sel
     let shown=0;
     pts.forEach((p,i)=>{
       if(!Number.isFinite(p.lat)||!Number.isFinite(p.lon)||p.lat < -90||p.lat > 90||p.lon < -180||p.lon > 180||(p.lat===0&&p.lon===0)) return;
-      const active=p.label===selectedLabel;
-      const icon=L.divIcon({className:'',html:'<div class="bus-dot '+(active?'selected':'')+'"></div>',iconSize:[24,24],iconAnchor:[12,12]});
+      const icon=L.divIcon({className:'',html:'<div class="bus-dot selected"></div>',iconSize:[24,24],iconAnchor:[12,12]});
       const m=L.marker([p.lat,p.lon],{icon}).addTo(map);
-      m.bindPopup('<b>'+safe(p.label)+'</b><br>Route: '+safe(p.route||'Not matched')+'<br>Speed: '+(p.speed>0?(p.speed*3.6).toFixed(0)+' km/h':'Unavailable')+'<br>Updated: '+(p.time?new Date(p.time*1000).toLocaleTimeString():'Unknown'));
+      m.bindPopup('<b>'+safe(p.label)+'</b><br>Route ID: '+safe(p.route||'Not matched')+'<br>Trip ID: '+safe(p.tripId||'Unavailable')+'<br>Speed: '+(p.speed>0?(p.speed*3.6).toFixed(0)+' km/h':'Unavailable')+'<br>Updated: '+(p.time?new Date(p.time*1000).toLocaleTimeString():'Unknown'));
       m.on('click',()=>{if(window.AndroidBus&&window.AndroidBus.selectBus)window.AndroidBus.selectBus(i);});
       bounds.push([p.lat,p.lon]); shown++;
     });
+    if(stops.length){
+      const coords=stops.map(p=>[p.lat,p.lon]);
+      L.polyline(coords,{color:'#176b87',weight:5,opacity:.85}).addTo(map);
+      stops.forEach((p,i)=>{
+        const icon=L.divIcon({className:'',html:'<div class="trip-stop"></div>',iconSize:[16,16],iconAnchor:[8,8]});
+        L.marker([p.lat,p.lon],{icon}).addTo(map).bindPopup('<b>Stop '+p.sequence+': '+safe(p.name)+'</b><br>stop_id: '+safe(p.id));
+        bounds.push([p.lat,p.lon]);
+      });
+    }
     journey.forEach(p=>{
       if(!Number.isFinite(p[0])||!Number.isFinite(p[1])) return;
       const icon=L.divIcon({className:'',html:'<div class="endpoint"></div>',iconSize:[20,20],iconAnchor:[10,10]});
-      L.marker([p[0],p[1]],{icon}).addTo(map).bindPopup('<b>'+safe(p[3])+': '+safe(p[2])+'</b>');
+      L.marker([p[0],p[1]],{icon}).addTo(map).bindPopup('<b>'+safe(p[4])+': '+safe(p[2])+'</b><br>stop_id: '+safe(p[3]));
       bounds.push([p[0],p[1]]);
     });
-    document.getElementById('note').textContent=shown+' live bus markers • tap a marker to select';
-    if(bounds.length) map.fitBounds(bounds,{padding:[28,28],maxZoom:12});
+    document.getElementById('note').textContent=shown+' selected bus marker(s) • '+stops.length+' trip stops • '+(selectedTrip?'trip '+selectedTrip:'select a bus');
+    if(bounds.length) map.fitBounds(bounds,{padding:[28,28],maxZoom:13});
     setTimeout(()=>map.invalidateSize(),250);
     </script></body></html>"""
 }
