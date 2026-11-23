@@ -13,8 +13,8 @@ import java.util.concurrent.TimeUnit
 import java.util.zip.ZipInputStream
 
 data class Stop(val id: String, val name: String, val lat: Double, val lon: Double)
-data class BusRoute(val id: String, val shortName: String, val longName: String)
-data class LiveBus(val id: String, val label: String, val routeId: String, val tripId: String, val lat: Double, val lon: Double, val bearing: Double)
+data class BusRoute(val id: String, val shortName: String, val longName: String, val routeType: Int = 3)
+data class LiveBus(val id: String, val label: String, val routeId: String, val tripId: String, val lat: Double, val lon: Double, val bearing: Double, val timestamp: Long = 0L, val speed: Double = 0.0, val routeName: String = "", val routeLongName: String = "", val startTime: String = "")
 data class Arrival(val tripId: String, val routeId: String, val stopId: String, val arrivalEpoch: Long?, val delay: Int?)
 
 class TransitRepository(private val context: Context) {
@@ -56,7 +56,7 @@ class TransitRepository(private val context: Context) {
                     }
                     "routes.txt" -> readCsv(zip) { row ->
                         val id = row["route_id"].orEmpty()
-                        if (id.isNotBlank()) routes += BusRoute(id, row["route_short_name"].orEmpty(), row["route_long_name"].orEmpty())
+                        if (id.isNotBlank()) routes += BusRoute(id, row["route_short_name"].orEmpty(), row["route_long_name"].orEmpty(), row["route_type"]?.toIntOrNull() ?: 3)
                     }
                 }
                 zip.closeEntry()
@@ -128,7 +128,7 @@ class TransitRepository(private val context: Context) {
 
     suspend fun status(): String = withContext(Dispatchers.IO) { get("$base/apsrtc/rt/status.json") }
 
-    suspend fun liveBuses(): List<LiveBus> = withContext(Dispatchers.IO) {
+    suspend fun liveBuses(routes: List<BusRoute> = emptyList()): List<LiveBus> = withContext(Dispatchers.IO) {
         val root = JsonParser.parseString(get("$base/apsrtc/rt/vehicle_positions.json")).asJsonObject
         val entities = root.getAsJsonArray("entity") ?: return@withContext emptyList()
         entities.mapNotNull { item ->
@@ -144,7 +144,12 @@ class TransitRepository(private val context: Context) {
                     tripId = trip?.get("tripId")?.asString.orEmpty(),
                     lat = p.get("latitude")?.asDouble ?: return@runCatching null,
                     lon = p.get("longitude")?.asDouble ?: return@runCatching null,
-                    bearing = p.get("bearing")?.asDouble ?: 0.0
+                    bearing = p.get("bearing")?.asDouble ?: 0.0,
+                    timestamp = v.get("timestamp")?.asLong ?: 0L,
+                    speed = p.get("speed")?.asDouble ?: 0.0,
+                    routeName = routes.firstOrNull { it.id == trip?.get("routeId")?.asString.orEmpty() }?.shortName.orEmpty(),
+                    routeLongName = routes.firstOrNull { it.id == trip?.get("routeId")?.asString.orEmpty() }?.longName.orEmpty(),
+                    startTime = trip?.get("startTime")?.asString.orEmpty()
                 )
             }.getOrNull()
         }
