@@ -55,7 +55,9 @@ fun APSRTCApp() {
     var destination by remember { mutableStateOf<Stop?>(null) }
     var originText by remember { mutableStateOf("") }
     var destinationText by remember { mutableStateOf("") }
-    var routeResults by remember { mutableStateOf<List<BusRoute>>(emptyList()) }
+    var routeResults by remember { mutableStateOf<List<JourneyOption>>(emptyList()) }
+    var searchingRoutes by remember { mutableStateOf(false) }
+    var routeSearchError by remember { mutableStateOf("") }
     var nearbyStops by remember { mutableStateOf<List<Stop>>(emptyList()) }
     val fusedLocation = remember { LocationServices.getFusedLocationProviderClient(context) }
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
@@ -153,8 +155,18 @@ fun APSRTCApp() {
                     Modifier.padding(padding), telugu, loading, error, stops, originText, destinationText,
                     { originText = it; origin = null }, { destinationText = it; destination = null },
                     { origin = it; originText = it.name }, { destination = it; destinationText = it.name },
-                    origin, destination, routeResults,
-                    { scope.launch { if (origin != null && destination != null) runCatching { routeResults = repo.findRoutes(origin!!, destination!!, routes) }.onFailure { error = it.message ?: "Route search failed" } } },
+                    origin, destination, routeResults, searchingRoutes, routeSearchError,
+                    { scope.launch {
+                        val fromStop = origin
+                        val toStop = destination
+                        if (fromStop == null || toStop == null) { routeSearchError = "Choose both stops from the suggestions."; return@launch }
+                        if (fromStop.id == toStop.id) { routeSearchError = "From and To stops must be different."; routeResults = emptyList(); return@launch }
+                        searchingRoutes = true; routeSearchError = ""; routeResults = emptyList()
+                        try { routeResults = repo.findJourneys(fromStop, toStop, routes, stops)
+                            if (routeResults.isEmpty()) routeSearchError = "No scheduled direct buses found for these stops in the current GTFS timetable."
+                        } catch (e: Exception) { routeSearchError = e.message ?: "Route search failed. Check your internet connection and retry." }
+                        finally { searchingRoutes = false }
+                    } },
                     favorites, { id -> favorites = repo.toggleFavorite(id) },
                     nearbyStops, { locationPermission.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION)) },
                     error
@@ -167,51 +179,120 @@ fun APSRTCApp() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(
     modifier: Modifier, telugu: Boolean, loading: Boolean, initialError: String, stops: List<Stop>,
     from: String, to: String, onFrom: (String) -> Unit, onTo: (String) -> Unit,
     selectFrom: (Stop) -> Unit, selectTo: (Stop) -> Unit, origin: Stop?, destination: Stop?,
-    results: List<BusRoute>, search: () -> Unit, favorites: Set<String>, toggleFavorite: (String) -> Unit,
+    results: List<JourneyOption>, searching: Boolean, searchError: String, search: () -> Unit,
+    favorites: Set<String>, toggleFavorite: (String) -> Unit,
     nearbyStops: List<Stop>, findNearby: () -> Unit, error: String
 ) {
-    Column(modifier.fillMaxSize().padding(16.dp)) {
-        Text(if (telugu) "మీ ప్రయాణాన్ని ప్లాన్ చేయండి" else "Plan your journey", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text(if (telugu) "APSRTC బస్ స్టాప్‌ల మధ్య సేవలను కనుగొనండి" else "Find scheduled services between APSRTC stops", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(18.dp))
+    var busType by remember { mutableStateOf("All") }
+    var sortBy by remember { mutableStateOf("Departure") }
+    val visible = results.filter { item ->
+        val label = (item.route.shortName + " " + item.route.longName).lowercase()
+        when (busType) {
+            "Ordinary" -> listOf("pallevelugu", "palle velugu", "ordinary", "city", "metro").any { it in label }
+            "Express" -> listOf("express", "deluxe", "garuda", "indra", "vennela").any { it in label }
+            "Premium / AC" -> listOf("super luxury", "ultra deluxe", "amaravati", "dolphin", "star", "ac").any { it in label }
+            else -> true
+        }
+    }.let { list -> when (sortBy) {
+        "Arrival" -> list.sortedBy { it.arrivalMinutes }
+        "Shortest" -> list.sortedBy { it.durationMinutes }
+        else -> list.sortedBy { it.departureMinutes }
+    } }
+
+    Column(modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Text(if (telugu) "మీ ప్రయాణాన్ని ప్లాన్ చేయండి" else "Plan your journey", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
+        Text(if (telugu) "APSRTC స్టాప్‌ల మధ్య షెడ్యూల్ బస్సులు" else "Search scheduled APSRTC services between stops", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(16.dp))
         StopAutocomplete(if (telugu) "ఎక్కడి నుంచి?" else "From", from, stops, onFrom, selectFrom)
         Spacer(Modifier.height(10.dp))
         StopAutocomplete(if (telugu) "ఎక్కడికి?" else "To", to, stops, onTo, selectTo)
-        Spacer(Modifier.height(8.dp))
-        OutlinedButton(onClick = findNearby, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Default.MyLocation, null); Spacer(Modifier.width(8.dp)); Text(if (telugu) "దగ్గరలోని బస్ స్టాప్‌లు" else "Find nearby bus stops")
+        if (origin != null && destination != null) {
+            Card(Modifier.fillMaxWidth().padding(top = 10.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("ROUTE PREVIEW", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Text("${origin.name}  →  ${destination.name}", fontWeight = FontWeight.SemiBold)
+                    Text(if (searching) "Checking scheduled services…" else "${results.size} matching scheduled trips", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        } else {
+            Text(if (stops.isEmpty() && loading) "Loading APSRTC stops and routes…" else "Type at least 2 letters and choose a stop from the suggestions.", modifier = Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = findNearby, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Default.MyLocation, null); Spacer(Modifier.width(6.dp)); Text(if (telugu) "దగ్గరలోని స్టాప్‌లు" else "Nearby stops")
+            }
+            Spacer(Modifier.width(8.dp))
+            Button(onClick = search, enabled = origin != null && destination != null && !searching && !loading, modifier = Modifier.weight(1f)) {
+                if (searching) { CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)) }
+                else { Icon(Icons.Default.Search, null); Spacer(Modifier.width(6.dp)) }
+                Text(if (telugu) "బస్సులు వెతకండి" else "Find buses")
+            }
         }
         if (nearbyStops.isNotEmpty()) {
-            Text(if (telugu) "దగ్గరలోని స్టాప్‌లు" else "Nearby stops", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            nearbyStops.forEach { Text("• ${it.name}", Modifier.padding(vertical = 2.dp)) }
+            Text("Nearby stops", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
+            Text(nearbyStops.take(5).joinToString("  •  ") { it.name }, style = MaterialTheme.typography.bodySmall)
         }
-        Spacer(Modifier.height(12.dp))
-        Button(onClick = search, enabled = origin != null && destination != null, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Default.Search, null); Spacer(Modifier.width(8.dp)); Text(if (telugu) "బస్సులు వెతకండి" else "Find buses")
+        if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 10.dp))
+        if (initialError.isNotBlank()) Text(initialError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        if (searchError.isNotBlank()) {
+            Text(searchError, color = if (results.isEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
         }
-        if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 16.dp))
-        if (initialError.isNotBlank()) Text(initialError, color = MaterialTheme.colorScheme.error)
-        if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
         if (results.isNotEmpty()) {
-            Spacer(Modifier.height(16.dp)); Text("Matching services", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            results.forEach { route ->
-                ElevatedCard(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                    Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(route.shortName.ifBlank { route.id }, fontWeight = FontWeight.Bold)
-                            Text(route.longName, style = MaterialTheme.typography.bodySmall)
-                        }
-                        IconButton(onClick = { toggleFavorite(route.id) }) {
-                            Icon(if (favorites.contains(route.id)) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                contentDescription = "Toggle favourite")
+            Spacer(Modifier.height(10.dp))
+            Text("Scheduled buses • ${visible.size}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("All", "Ordinary", "Express", "Premium / AC").forEach { type ->
+                    FilterChip(selected = busType == type, onClick = { busType = type }, label = { Text(type, style = MaterialTheme.typography.labelSmall) })
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Sort", style = MaterialTheme.typography.labelMedium)
+                listOf("Departure", "Arrival", "Shortest").forEach { option ->
+                    FilterChip(selected = sortBy == option, onClick = { sortBy = option }, label = { Text(option, style = MaterialTheme.typography.labelSmall) })
+                }
+            }
+            if (visible.isEmpty()) Text("No trips match this bus-type filter. Choose All to see every scheduled service.", modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
+            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
+                items(visible) { journey ->
+                    ElevatedCard(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(journey.route.shortName.ifBlank { journey.route.id }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                    Text(journey.route.longName.ifBlank { "APSRTC scheduled service" }, style = MaterialTheme.typography.bodySmall)
+                                }
+                                IconButton(onClick = { toggleFavorite(journey.route.id) }) {
+                                    Icon(if (favorites.contains(journey.route.id)) Icons.Default.Favorite else Icons.Default.FavoriteBorder, contentDescription = "Toggle favourite")
+                                }
+                            }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Column { Text(journey.departure, fontWeight = FontWeight.Bold); Text("Departure", style = MaterialTheme.typography.labelSmall) }
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(Icons.Default.ArrowForward, null, tint = MaterialTheme.colorScheme.primary)
+                                    Text("${journey.durationMinutes} min", style = MaterialTheme.typography.labelSmall)
+                                }
+                                Column(horizontalAlignment = Alignment.End) { Text(journey.arrival, fontWeight = FontWeight.Bold); Text("Arrival", style = MaterialTheme.typography.labelSmall) }
+                            }
+                            if (journey.intermediateStops.isNotEmpty()) {
+                                Text("Via: ${journey.intermediateStops.take(5).joinToString(" → ")}", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
+                            } else Text("Direct service • no intermediate stop names available", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
+                            Text("GTFS scheduled data • Live bus location is shown separately on the Map tab", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
                         }
                     }
                 }
+            }
+        } else {
+            Spacer(Modifier.height(8.dp))
+            if (origin != null && destination != null && !searching && searchError.isBlank()) {
+                Text("Choose Find buses to load matching departures.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -221,9 +302,9 @@ fun SearchScreen(
 @Composable
 fun StopAutocomplete(label: String, value: String, stops: List<Stop>, onValue: (String) -> Unit, onSelect: (Stop) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    val matches = remember(value, stops) { if (value.length < 2) emptyList() else stops.filter { it.name.contains(value, true) }.take(8) }
+    val matches = remember(value, stops) { if (value.trim().length < 2) emptyList() else stops.filter { it.name.contains(value.trim(), true) || it.id.contains(value.trim(), true) }.take(12) }
     ExposedDropdownMenuBox(expanded = expanded && matches.isNotEmpty(), onExpandedChange = { expanded = it }) {
-        OutlinedTextField(value, onValue, Modifier.fillMaxWidth().menuAnchor(), label = { Text(label) }, singleLine = true,
+        OutlinedTextField(value, { typed -> onValue(typed); expanded = true }, Modifier.fillMaxWidth().menuAnchor(), label = { Text(label) }, singleLine = true,
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) })
         ExposedDropdownMenu(expanded = expanded && matches.isNotEmpty(), onDismissRequest = { expanded = false }) {
             matches.forEach { stop -> DropdownMenuItem(text = { Text(stop.name) }, onClick = { onSelect(stop); expanded = false }) }
