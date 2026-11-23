@@ -9,6 +9,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.google.android.gms.location.LocationServices
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -61,6 +63,7 @@ fun APSRTCApp() {
     var buses by remember { mutableStateOf(repo.cachedLiveBuses()) }
     var status by remember { mutableStateOf("Loading cached or live APSRTC feed…") }
     var error by remember { mutableStateOf("") }
+    var staticError by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(true) }
     var refreshing by remember { mutableStateOf(false) }
     var origin by remember { mutableStateOf<Stop?>(null) }
@@ -137,8 +140,8 @@ fun APSRTCApp() {
     }
 
     LaunchedEffect(Unit) {
-        runCatching { val data = repo.loadStaticData(); stops = data.first; routes = data.second }
-            .onFailure { error = it.message ?: "Could not load APSRTC route data" }
+        runCatching { val data = repo.loadStaticData(); stops = data.first; routes = data.second; staticError = "" }
+            .onFailure { staticError = it.message ?: "Could not load APSRTC stop data" }
         loading = false
         delay(1800)
         checkForAppUpdate(false)
@@ -189,7 +192,7 @@ fun APSRTCApp() {
         ) { padding ->
             when (tab) {
                 0 -> SearchScreen(
-                    Modifier.padding(padding), telugu, loading, error, stops, originText, destinationText,
+                    Modifier.padding(padding), telugu, loading, staticError, stops, originText, destinationText,
                     { originText = it; origin = null; routeResults = emptyList(); routeSearchError = "" }, { destinationText = it; destination = null; routeResults = emptyList(); routeSearchError = "" },
                     { origin = it; originText = it.name }, { destination = it; destinationText = it.name },
                     origin, destination, routeResults, searchingRoutes, routeSearchError,
@@ -206,7 +209,14 @@ fun APSRTCApp() {
                     } },
                     favorites, { id -> favorites = repo.toggleFavorite(id) },
                     nearbyStops, { locationPermission.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION)) },
-                    error
+                    error,
+                    { scope.launch {
+                        loading = true
+                        staticError = ""
+                        try { val data = repo.loadStaticData(); stops = data.first; routes = data.second }
+                        catch (e: Exception) { staticError = e.message ?: "Could not load APSRTC stop data" }
+                        finally { loading = false }
+                    } }
                 )
                 1 -> MapScreen(Modifier.padding(padding), buses, routes, origin, destination, selectedBus, lastUpdated) { selectedBus = it }
                 2 -> LiveScreen(Modifier.padding(padding), status, buses, arrivals, stops, telugu, lastUpdated, error)
@@ -258,7 +268,7 @@ fun SearchScreen(
     selectFrom: (Stop) -> Unit, selectTo: (Stop) -> Unit, origin: Stop?, destination: Stop?,
     results: List<JourneyOption>, searching: Boolean, searchError: String, search: () -> Unit,
     favorites: Set<String>, toggleFavorite: (String) -> Unit,
-    nearbyStops: List<Stop>, findNearby: () -> Unit, error: String
+    nearbyStops: List<Stop>, findNearby: () -> Unit, error: String, retryStops: () -> Unit
 ) {
     var busType by remember { mutableStateOf("All") }
     var sortBy by remember { mutableStateOf("Departure") }
@@ -298,6 +308,18 @@ fun SearchScreen(
             Text(if (stops.isEmpty() && loading) "Loading APSRTC stops and routes…" else "Type at least 2 letters and choose a stop from the suggestions.", modifier = Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.height(10.dp))
+        Text(if (telugu) "బస్సు ఫిల్టర్లు" else "Bus filters", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("All", "Ordinary", "Express", "Premium / AC").forEach { type ->
+                FilterChip(selected = busType == type, onClick = { busType = type }, label = { Text(type, style = MaterialTheme.typography.labelSmall) })
+            }
+        }
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(if (telugu) "క్రమం" else "Sort", style = MaterialTheme.typography.labelMedium)
+            listOf("Departure", "Arrival", "Shortest").forEach { option ->
+                FilterChip(selected = sortBy == option, onClick = { sortBy = option }, label = { Text(option, style = MaterialTheme.typography.labelSmall) })
+            }
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedButton(onClick = findNearby, modifier = Modifier.weight(1f)) {
                 Icon(Icons.Default.MyLocation, null); Spacer(Modifier.width(6.dp)); Text(if (telugu) "దగ్గరలోని స్టాప్‌లు" else "Nearby stops")
@@ -314,25 +336,17 @@ fun SearchScreen(
             Text(nearbyStops.take(5).joinToString("  •  ") { it.name }, style = MaterialTheme.typography.bodySmall)
         }
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 10.dp))
-        if (initialError.isNotBlank()) Text(initialError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-        if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        if (initialError.isNotBlank()) {
+            Text(if (telugu) "స్టాప్‌ల జాబితా లోడ్ కాలేదు" else "Stop list could not load: $initialError", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = retryStops) { Text(if (telugu) "మళ్లీ ప్రయత్నించండి" else "Retry stop data") }
+        }
+        if (error.isNotBlank()) Text(if (telugu) "లైవ్ అప్‌డేట్స్ తాత్కాలికంగా అందుబాటులో లేవు" else "Live updates temporarily unavailable: $error", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         if (searchError.isNotBlank()) {
             Text(searchError, color = if (results.isEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
         }
         if (results.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
             Text("Scheduled buses • ${visible.size}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("All", "Ordinary", "Express", "Premium / AC").forEach { type ->
-                    FilterChip(selected = busType == type, onClick = { busType = type }, label = { Text(type, style = MaterialTheme.typography.labelSmall) })
-                }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Sort", style = MaterialTheme.typography.labelMedium)
-                listOf("Departure", "Arrival", "Shortest").forEach { option ->
-                    FilterChip(selected = sortBy == option, onClick = { sortBy = option }, label = { Text(option, style = MaterialTheme.typography.labelSmall) })
-                }
-            }
             if (visible.isEmpty()) Text("No trips match this bus-type filter. Choose All to see every scheduled service.", modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
                 items(visible) { journey ->
@@ -365,6 +379,7 @@ fun SearchScreen(
             }
         } else {
             Spacer(Modifier.height(8.dp))
+            if (stops.isEmpty() && !loading && initialError.isBlank()) Text(if (telugu) "స్టాప్‌ల సమాచారం అందుబాటులో లేదు. మళ్లీ ప్రయత్నించండి." else "Stop suggestions are unavailable until APSRTC stop data loads.", style = MaterialTheme.typography.bodySmall)
             if (origin != null && destination != null && !searching && searchError.isBlank()) {
                 Text("Choose Find buses to load matching departures.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
