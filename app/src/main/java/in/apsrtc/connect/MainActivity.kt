@@ -85,6 +85,23 @@ fun APSRTCApp() {
     var lastUpdated by remember { mutableStateOf(context.getSharedPreferences("apsrtc_connect", android.content.Context.MODE_PRIVATE).getLong("last_live_success", 0L)) }
     var favorites by remember { mutableStateOf(repo.favorites()) }
     var selectedBus by remember { mutableStateOf<LiveBus?>(null) }
+    var updateInfo by remember { mutableStateOf<AppUpdate?>(null) }
+    var downloadedUpdate by remember { mutableStateOf<java.io.File?>(null) }
+    var updateDialogVisible by remember { mutableStateOf(false) }
+    var updateStatus by remember { mutableStateOf("Checking GitHub for updates…") }
+    var downloadingUpdate by remember { mutableStateOf(false) }
+
+    suspend fun checkForAppUpdate(showUpToDate: Boolean) {
+        updateStatus = "Checking GitHub for updates…"
+        try {
+            updateInfo = UpdateManager.checkLatest()
+            updateStatus = if (updateInfo == null) "Already using the latest version." else "A new version is available: " + updateInfo!!.version
+            if (updateInfo != null || showUpToDate) updateDialogVisible = true
+        } catch (e: Exception) {
+            updateStatus = e.message ?: "Could not check for updates."
+            updateDialogVisible = true
+        }
+    }
 
     fun refreshLive() {
         scope.launch {
@@ -118,6 +135,8 @@ fun APSRTCApp() {
         runCatching { val data = repo.loadStaticData(); stops = data.first; routes = data.second }
             .onFailure { error = it.message ?: "Could not load APSRTC route data" }
         loading = false
+        delay(1800)
+        checkForAppUpdate(false)
     }
 
     LaunchedEffect(appVisible) {
@@ -149,6 +168,7 @@ fun APSRTCApp() {
                     },
                     actions = {
                         TextButton(onClick = { telugu = !telugu }) { Text(if (telugu) "EN" else "తె") }
+                        IconButton(onClick = { scope.launch { checkForAppUpdate(true) } }) { Icon(Icons.Default.SystemUpdate, "Check app updates") }
                         IconButton(onClick = { refreshLive() }, enabled = !refreshing) { Icon(Icons.Default.Refresh, "Refresh live buses") }
                     }
                 )
@@ -187,6 +207,40 @@ fun APSRTCApp() {
                 2 -> LiveScreen(Modifier.padding(padding), status, buses, arrivals, stops, telugu, lastUpdated, error)
                 else -> FavoritesScreen(Modifier.padding(padding), favorites, routes, telugu) { id -> favorites = repo.toggleFavorite(id) }
             }
+        }
+        if (updateDialogVisible) {
+            AlertDialog(
+                onDismissRequest = { if (!downloadingUpdate) updateDialogVisible = false },
+                title = { Text("APSRTC Connect update") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(updateStatus)
+                        updateInfo?.let { Text("Latest version: " + it.version, fontWeight = FontWeight.SemiBold) }
+                        if (downloadingUpdate) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        if (downloadedUpdate != null) Text("APK downloaded. Tap Install to continue.")
+                    }
+                },
+                confirmButton = {
+                    TextButton(enabled = !downloadingUpdate && (downloadedUpdate != null || updateInfo != null), onClick = {
+                        val ready = downloadedUpdate
+                        if (ready != null) { UpdateManager.install(context, ready) }
+                        else {
+                            val url = updateInfo?.downloadUrl ?: return@TextButton
+                            scope.launch {
+                                downloadingUpdate = true
+                                updateStatus = "Downloading update…"
+                                try {
+                                    val id = UpdateManager.download(context, url)
+                                    downloadedUpdate = UpdateManager.waitForDownload(context, id)
+                                    updateStatus = "Download complete."
+                                } catch (e: Exception) { updateStatus = e.message ?: "Download failed." }
+                                finally { downloadingUpdate = false }
+                            }
+                        }
+                    }) { Text(if (downloadedUpdate != null) "Install" else "Download APK") }
+                },
+                dismissButton = { TextButton(onClick = { updateDialogVisible = false }) { Text("Later") } }
+            )
         }
     }
 }
