@@ -132,7 +132,7 @@ fun APSRTCApp() {
                     nearbyStops, { locationPermission.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION)) },
                     error
                 )
-                1 -> MapScreen(Modifier.padding(padding), buses, selectedBus) { selectedBus = it }
+                1 -> MapScreen(Modifier.padding(padding), buses, routes, origin, destination, selectedBus) { selectedBus = it }
                 2 -> LiveScreen(Modifier.padding(padding), status, buses, arrivals, stops, telugu)
                 else -> FavoritesScreen(Modifier.padding(padding), favorites, routes, telugu) { id -> favorites = repo.toggleFavorite(id) }
             }
@@ -243,36 +243,86 @@ fun LiveScreen(modifier: Modifier, status: String, buses: List<LiveBus>, arrival
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MapScreen(modifier: Modifier, buses: List<LiveBus>, selected: LiveBus?, onSelect: (LiveBus?) -> Unit) {
+fun MapScreen(
+    modifier: Modifier, buses: List<LiveBus>, routes: List<BusRoute>,
+    origin: Stop?, destination: Stop?, selected: LiveBus?, onSelect: (LiveBus?) -> Unit
+) {
+    var busType by remember { mutableStateOf("All") }
+    var sortBy by remember { mutableStateOf("Latest update") }
+    val routeById = remember(routes) { routes.associateBy { it.id } }
+    fun category(bus: LiveBus): String {
+        val name = (routeById[bus.routeId]?.shortName.orEmpty() + " " + routeById[bus.routeId]?.longName.orEmpty() + " " + bus.routeLongName).lowercase()
+        return when {
+            listOf("pallevelugu", "palle velugu", "ordinary", "city", "metro").any { it in name } -> "Ordinary"
+            listOf("super luxury", "ultra deluxe", "amaravati", "dolphin", "star").any { it in name } -> "Premium"
+            listOf("express", "deluxe", "garuda", "indra", "vennela").any { it in name } -> "Express"
+            else -> "Other"
+        }
+    }
+    val filtered = buses.filter { busType == "All" || category(it) == busType }
+        .let { list -> when (sortBy) {
+            "Fastest" -> list.sortedByDescending { it.speed }
+            "Route" -> list.sortedBy { it.routeId }
+            else -> list.sortedByDescending { it.timestamp }
+        } }
     Column(modifier.fillMaxSize()) {
-        Text("Live bus map", Modifier.padding(16.dp), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text("Live buses • one map", Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text(if (origin != null && destination != null) "Journey: ${origin.name} → ${destination.name}" else "All available live vehicle positions", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            listOf("All", "Ordinary", "Express", "Premium", "Other").forEach { type ->
+                FilterChip(selected = busType == type, onClick = { busType = type }, label = { Text(type) }, modifier = Modifier.padding(end = 4.dp))
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Sort:", style = MaterialTheme.typography.labelMedium)
+            Spacer(Modifier.width(8.dp))
+            listOf("Latest update", "Fastest", "Route").forEach { option ->
+                FilterChip(selected = sortBy == option, onClick = { sortBy = option }, label = { Text(option) }, modifier = Modifier.padding(end = 4.dp))
+            }
+        }
         AndroidView(
             modifier = Modifier.weight(1f).fillMaxWidth(),
-            factory = { ctx ->
-                WebView(ctx).apply {
-                    settings.javaScriptEnabled = true
-                    webViewClient = WebViewClient()
-                    loadDataWithBaseURL("https://www.openstreetmap.org", mapHtml(buses), "text/html", "UTF-8", null)
-                }
-            },
-            update = { it.loadDataWithBaseURL("https://www.openstreetmap.org", mapHtml(buses), "text/html", "UTF-8", null) }
+            factory = { ctx -> WebView(ctx).apply {
+                settings.javaScriptEnabled = true
+                webViewClient = WebViewClient()
+                loadDataWithBaseURL("https://www.openstreetmap.org", mapHtml(filtered, origin, destination), "text/html", "UTF-8", null)
+            } },
+            update = { it.loadDataWithBaseURL("https://www.openstreetmap.org", mapHtml(filtered, origin, destination), "text/html", "UTF-8", null) }
         )
-        if (selected != null) Text("Selected: ${selected.label} • ${selected.lat}, ${selected.lon}", Modifier.padding(12.dp))
-        Text("${buses.size} live positions • Map uses OpenStreetMap", Modifier.padding(12.dp), style = MaterialTheme.typography.labelSmall)
+        if (selected != null) {
+            val route = routeById[selected.routeId]
+            ListItem(
+                headlineContent = { Text(selected.label) },
+                supportingContent = { Text("${route?.shortName ?: selected.routeId.ifBlank { "Route unavailable" }} • ${category(selected)} • ${if (selected.timestamp > 0) SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(selected.timestamp * 1000)) else "Time unavailable"}") },
+                trailingContent = { Text(if (selected.speed > 0) "${"%.0f".format(selected.speed * 3.6)} km/h" else "GPS") }
+            )
+        }
+        Text("${filtered.size} / ${buses.size} live positions • Auto-refresh every 30 seconds • © OpenStreetMap", Modifier.padding(12.dp), style = MaterialTheme.typography.labelSmall)
     }
 }
 
-private fun mapHtml(buses: List<LiveBus>): String {
-    val markers = buses.take(500).joinToString(",") { "[${it.lat},${it.lon},'${it.label.replace("'","")}']" }
+private fun mapHtml(buses: List<LiveBus>, origin: Stop?, destination: Stop?): String {
+    val gson = com.google.gson.Gson()
+    val points = buses.map { bus -> mapOf(
+        "lat" to bus.lat, "lon" to bus.lon, "label" to bus.label,
+        "route" to bus.routeId, "speed" to bus.speed, "time" to bus.timestamp
+    ) }
+    val markers = gson.toJson(points)
+    val journey = gson.toJson(listOfNotNull(origin?.let { listOf(it.lat, it.lon, it.name, "From") }, destination?.let { listOf(it.lat, it.lon, it.name, "To") }))
     return """<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <style>html,body,#map{height:100%;margin:0}</style></head><body><div id="map"></div><script>
-    const pts=[$markers]; const map=L.map('map').setView([16.5,80.6],7);
+    <style>html,body,#map{height:100%;margin:0}.bus-dot{background:#b3261e;border:2px solid white;border-radius:50%;width:13px;height:13px;box-shadow:0 1px 5px #555}</style></head><body><div id="map"></div><script>
+    const pts=$markers; const journey=$journey; const map=L.map('map').setView([16.5,80.6],7);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'© OpenStreetMap'}).addTo(map);
-    pts.forEach(p=>L.marker([p[0],p[1]]).addTo(map).bindPopup(p[2]));
-    if(pts.length){map.fitBounds(pts.map(p=>[p[0],p[1]]),{padding:[20,20]});}
+    const bounds=[];
+    pts.forEach(p=>{const m=L.marker([p.lat,p.lon],{icon:L.divIcon({className:'',html:'<div class="bus-dot"></div>',iconSize:[17,17],iconAnchor:[8,8]})}).addTo(map);
+      m.bindPopup('<b>'+String(p.label).replace(/[&<>"]/g,'')+'</b><br>Route: '+String(p.route||'Not matched')+'<br>Speed: '+(p.speed>0?(p.speed*3.6).toFixed(0)+' km/h':'Unavailable')+'<br>Updated: '+(p.time?new Date(p.time*1000).toLocaleTimeString():'Unknown')); bounds.push([p.lat,p.lon]);});
+    journey.forEach((p,i)=>{L.marker([p[0],p[1]]).addTo(map).bindPopup('<b>'+p[3]+': '+p[2]+'</b>');bounds.push([p[0],p[1]]);});
+    if(journey.length===2){L.polyline([[journey[0][0],journey[0][1]],[journey[1][0],journey[1][1]]],{color:'#315c8a',dashArray:'6 8',weight:4}).addTo(map);}
+    if(bounds.length){map.fitBounds(bounds,{padding:[24,24],maxZoom:12});}
     </script></body></html>"""
 }
 
