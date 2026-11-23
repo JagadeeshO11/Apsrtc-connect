@@ -20,7 +20,7 @@ data class Arrival(val tripId: String, val routeId: String, val stopId: String, 
 
 class TransitRepository(private val context: Context) {
     private val client = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS).readTimeout(40, TimeUnit.SECONDS).build()
+        .connectTimeout(30, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).callTimeout(150, TimeUnit.SECONDS).build()
     private val prefs = context.getSharedPreferences("apsrtc_connect", Context.MODE_PRIVATE)
     private val base = "https://maps.reclaim.city"
 
@@ -63,26 +63,67 @@ class TransitRepository(private val context: Context) {
         }
     }
 
-    suspend fun loadStaticData(): Pair<List<Stop>, List<BusRoute>> = withContext(Dispatchers.IO) {
-        val cache = java.io.File(context.cacheDir, "apsrtc.zip")
-        if (!cache.exists() || cache.length() < 100_000L || System.currentTimeMillis() - cache.lastModified() > 7L * 24 * 60 * 60 * 1000) {
-            val temp = java.io.File(context.cacheDir, "apsrtc.zip.download")
-            try {
-                val request = Request.Builder().url("$base/gtfs/apsrtc.zip")
-                    .header("User-Agent", "APSRTC-Connect/1.2 (Android)").build()
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) error("GTFS refresh failed: HTTP ${response.code}")
-                    response.body?.byteStream()?.use { input -> temp.outputStream().use(input::copyTo) }
+    private fun hasRequiredGtfsFiles(file: java.io.File): Boolean {
+        val found = mutableSetOf<String>()
+        return try {
+            ZipInputStream(file.inputStream().buffered()).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    when (entry.name.substringAfterLast('/')) {
+                        "stops.txt", "routes.txt", "trips.txt", "stop_times.txt" -> found += entry.name.substringAfterLast('/')
+                    }
+                    zip.closeEntry()
                 }
-                if (temp.length() < 100_000L) error("GTFS download was incomplete")
-                if (cache.exists()) cache.delete()
-                if (!temp.renameTo(cache)) error("Could not save refreshed GTFS cache")
-            } catch (e: Exception) {
+            }
+            found.containsAll(setOf("stops.txt", "routes.txt", "trips.txt", "stop_times.txt"))
+        } catch (_: Exception) { false }
+    }
+
+    private fun downloadGtfs(cache: java.io.File) {
+        val temp = java.io.File(context.cacheDir, "apsrtc.zip.download")
+        val sources = listOf(
+            "$base/gtfs/apsrtc.zip",
+            "https://raw.githubusercontent.com/reclaimchennai/India_GTFS/main/andhra-pradesh/apsrtc.zip"
+        )
+        val failures = mutableListOf<String>()
+        for (url in sources) {
+            try {
                 temp.delete()
-                if (!cache.exists() || cache.length() < 100_000L) throw e
-                // Keep using the last valid archive when the upstream feed is rate-limited or offline.
+                val request = Request.Builder().url(url)
+                    .header("User-Agent", "APSRTC-Connect/1.3 (Android)")
+                    .header("Accept", "application/zip, application/octet-stream")
+                    .build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) throw java.io.IOException("HTTP ${response.code}")
+                    val body = response.body ?: throw java.io.IOException("Empty download")
+                    body.byteStream().use { input -> temp.outputStream().buffered().use { output -> input.copyTo(output) } }
+                }
+                if (temp.length() < 100_000L) throw java.io.IOException("Downloaded archive is unexpectedly small")
+                if (!hasRequiredGtfsFiles(temp)) throw java.io.IOException("Downloaded file is not a valid APSRTC GTFS archive")
+                if (cache.exists() && !cache.delete()) throw java.io.IOException("Cannot replace old timetable cache")
+                if (!temp.renameTo(cache)) throw java.io.IOException("Cannot save downloaded timetable")
+                return
+            } catch (e: Exception) {
+                failures += "${url.substringBefore('/', url)}: ${e.message ?: "download failed"}"
+                temp.delete()
             }
         }
+        throw java.io.IOException("Could not download APSRTC stop and timetable data. Tried mirror and GitHub backup. ${failures.joinToString(" | ")}")
+    }
+
+    suspend fun loadStaticData(): Pair<List<Stop>, List<BusRoute>> = withContext(Dispatchers.IO) {
+        val cache = java.io.File(context.cacheDir, "apsrtc.zip")
+        if (cache.exists() && !hasRequiredGtfsFiles(cache)) cache.delete()
+        val stale = !cache.exists() || cache.length() < 100_000L ||
+            System.currentTimeMillis() - cache.lastModified() > 7L * 24 * 60 * 60 * 1000
+        if (stale) {
+            try { downloadGtfs(cache) }
+            catch (e: Exception) {
+                if (!cache.exists() || !hasRequiredGtfsFiles(cache)) throw e
+                // A previously validated archive remains usable if both mirrors are unavailable.
+            }
+        }
+        if (!hasRequiredGtfsFiles(cache)) throw java.io.IOException("APSRTC timetable archive is invalid. Please retry the download.")
         val stops = mutableListOf<Stop>()
         val routes = mutableListOf<BusRoute>()
         ZipInputStream(cache.inputStream().buffered()).use { zip ->
@@ -104,6 +145,7 @@ class TransitRepository(private val context: Context) {
                 zip.closeEntry()
             }
         }
+        if (stops.isEmpty()) throw java.io.IOException("APSRTC feed downloaded, but it contains no usable stops.")
         prefs.edit().putLong("static_loaded_at", System.currentTimeMillis()).apply()
         stops to routes
     }
