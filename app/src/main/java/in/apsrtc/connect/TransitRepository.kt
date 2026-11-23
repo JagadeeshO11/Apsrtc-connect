@@ -59,7 +59,7 @@ class TransitRepository(private val context: Context) {
         ZipInputStream(cache.inputStream().buffered()).use { zip ->
             while (true) {
                 val entry = zip.nextEntry ?: break
-                when (entry.name) {
+                when (entry.name.substringAfterLast('/')) {
                     "stops.txt" -> readCsv(zip) { row ->
                         val id = row["stop_id"].orEmpty()
                         val name = row["stop_name"].orEmpty()
