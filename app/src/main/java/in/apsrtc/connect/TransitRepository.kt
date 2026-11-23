@@ -251,7 +251,7 @@ class TransitRepository(private val context: Context) {
             }
         }
         journeys.distinctBy { "${it.route.id}|${it.departure}|${it.arrival}|${it.intermediateStops.joinToString()}" }
-            .sortedBy { it.departureMinutes }.take(100)
+            .sortedBy { it.departureMinutes }
     }
 
     suspend fun status(): String = withContext(Dispatchers.IO) { get("$base/apsrtc/rt/status.json") }
