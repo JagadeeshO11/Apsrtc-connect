@@ -162,7 +162,6 @@ fun APSRTCApp() {
                                 android.location.Location.distanceBetween(loc.latitude, loc.longitude, stop.lat, stop.lon, result)
                                 result[0]
                             }.take(10).toList()
-                        detectedLocationLabel = "Nearby stops updated"
                     }
                 }
             }
@@ -277,13 +276,13 @@ fun APSRTCApp() {
                         Text("Departure time", fontWeight = FontWeight.SemiBold)
                         listOf("All times", "00:00–06:00", "06:00–12:00", "12:00–18:00", "18:00–24:00").forEach { window ->
                             val value = if (window == "All times") null else window
-                            FilterChip(selected = selectedTimeWindow == value, onClick = { onTimeWindowChange(value) }, label = { Text(window) })
+                            FilterChip(selected = selectedTimeWindow == value, onClick = { selectedTimeWindow = value }, label = { Text(window) })
                         }
                         Text("APSRTC service classes (Palle Velugu, Express, Super Luxury, etc.) are not provided as a dedicated field in this feed. They are not guessed from names.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
                 confirmButton = { TextButton(onClick = { showRouteFilters = false }) { Text("Done") } },
-                dismissButton = { TextButton(onClick = { onRouteTypeChange(null); onTimeWindowChange(null) }) { Text("Clear") } }
+                dismissButton = { TextButton(onClick = { selectedGtfsRouteType = null; selectedTimeWindow = null }) { Text("Clear") } }
             )
         }
         if (updateDialogVisible) {
