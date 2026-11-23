@@ -47,7 +47,7 @@ fun APSRTCApp() {
     var stops by remember { mutableStateOf<List<Stop>>(emptyList()) }
     var routes by remember { mutableStateOf<List<BusRoute>>(emptyList()) }
     var buses by remember { mutableStateOf(repo.cachedLiveBuses()) }
-    var status by remember { mutableStateOf("Connecting to APSRTC live feed…") }
+    var status by remember { mutableStateOf("Loading cached or live APSRTC feed…") }
     var error by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(true) }
     var refreshing by remember { mutableStateOf(false) }
@@ -91,15 +91,9 @@ fun APSRTCApp() {
             runCatching { repo.arrivals() }
                 .onSuccess { fresh -> arrivals = fresh; repo.saveArrivals(fresh) }
                 .onFailure { failures += "Arrival feed: ${it.message ?: "network error"}"; if (arrivals.isEmpty()) arrivals = repo.cachedArrivals() }
-            runCatching { repo.status() }
-                .onSuccess { raw ->
-                    val obj = com.google.gson.JsonParser.parseString(raw).asJsonObject
-                    val feedTime = obj.get("feed_time")?.asLong ?: 0L
-                    if (feedTime > 0L) { lastUpdated = feedTime; context.getSharedPreferences("apsrtc_connect", android.content.Context.MODE_PRIVATE).edit().putLong("last_live_success", feedTime).apply() }
-                    val count = obj.get("vehicles")?.asInt ?: buses.size
-                    status = if (feedTime > 0L) "Feed time ${SimpleDateFormat("hh:mm:ss a", Locale.getDefault()).format(Date(feedTime * 1000))} • $count vehicles" else "$count vehicles reported"
-                }
-                .onFailure { failures += "Status feed: ${it.message ?: "network error"}" }
+            status = if (lastUpdated > 0L) {
+                "Vehicle feed timestamp ${SimpleDateFormat("hh:mm:ss a", Locale.getDefault()).format(Date(lastUpdated * 1000))} • ${buses.size} vehicles"
+            } else if (positionsOk) "Vehicle positions loaded" else "Showing saved data"
             if (status.startsWith("Connecting")) status = if (positionsOk) "Live vehicle positions loaded" else "Showing saved data"
             error = failures.joinToString("  •  ")
             } finally {
@@ -114,7 +108,7 @@ fun APSRTCApp() {
         loading = false
         while (true) {
             refreshLive()
-            delay(30_000)
+            delay(65_000)
         }
     }
 
