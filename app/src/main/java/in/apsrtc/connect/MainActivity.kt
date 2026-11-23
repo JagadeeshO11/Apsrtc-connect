@@ -92,6 +92,9 @@ fun APSRTCApp() {
     var downloadingUpdate by remember { mutableStateOf(false) }
 
     suspend fun checkForAppUpdate(showUpToDate: Boolean) {
+        val updatePrefs = context.getSharedPreferences("apsrtc_connect", android.content.Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        if (!showUpToDate && now - updatePrefs.getLong("last_update_check", 0L) < 12 * 60 * 60 * 1000L) return
         updateStatus = "Checking GitHub for updates…"
         try {
             updateInfo = UpdateManager.checkLatest()
@@ -99,7 +102,9 @@ fun APSRTCApp() {
             if (updateInfo != null || showUpToDate) updateDialogVisible = true
         } catch (e: Exception) {
             updateStatus = e.message ?: "Could not check for updates."
-            updateDialogVisible = true
+            if (showUpToDate) updateDialogVisible = true
+        } finally {
+            updatePrefs.edit().putLong("last_update_check", now).apply()
         }
     }
 
