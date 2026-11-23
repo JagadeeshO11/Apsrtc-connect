@@ -320,7 +320,7 @@ fun APSRTCApp() {
                                     val cached = UpdateManager.cachedApk(context, update)
                                     downloadedUpdate = cached ?: run {
                                         val id = UpdateManager.download(context, update)
-                                        UpdateManager.waitForDownload(context, id, update.version)
+                                        UpdateManager.waitForDownload(context, id, update)
                                     }
                                     updateStatus = "Download complete."
                                 } catch (e: Exception) { updateStatus = e.message ?: "Download failed." }
