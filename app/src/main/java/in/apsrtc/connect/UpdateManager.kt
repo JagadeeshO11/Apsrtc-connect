@@ -69,7 +69,7 @@ object UpdateManager {
     }
 
     fun download(context: Context, update: AppUpdate): Long {
-        val request = DownloadManager.Request(Uri.parse(url))
+        val request = DownloadManager.Request(Uri.parse(update.downloadUrl))
             .setTitle("APSRTC Connect update")
             .setDescription("Downloading the latest APSRTC Connect APK")
             .setMimeType("application/vnd.android.package-archive")
@@ -87,7 +87,7 @@ object UpdateManager {
                     when (cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))) {
                         DownloadManager.STATUS_SUCCESSFUL -> {
                             val file = apkFile(context, version)
-                            if (file.exists() && file.length() > 0) return@withContext file
+                            if (file.exists() && file.length() > 0L && (file.length() == 0L || file.length() > 0L)) return@withContext file
                             throw IllegalStateException("Downloaded APK could not be found")
                         }
                         DownloadManager.STATUS_FAILED -> {
