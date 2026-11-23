@@ -50,6 +50,7 @@ fun APSRTCApp() {
     var status by remember { mutableStateOf("Connecting to APSRTC live feed…") }
     var error by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(true) }
+    var refreshing by remember { mutableStateOf(false) }
     var origin by remember { mutableStateOf<Stop?>(null) }
     var destination by remember { mutableStateOf<Stop?>(null) }
     var originText by remember { mutableStateOf("") }
@@ -73,6 +74,9 @@ fun APSRTCApp() {
 
     fun refreshLive() {
         scope.launch {
+            if (refreshing) return@launch
+            refreshing = true
+            try {
             val failures = mutableListOf<String>()
             var positionsOk = false
             runCatching { repo.liveBuses(routes) }
@@ -96,6 +100,9 @@ fun APSRTCApp() {
                 .onFailure { failures += "Status feed: ${it.message ?: "network error"}" }
             if (status.startsWith("Connecting")) status = if (positionsOk) "Live vehicle positions loaded" else "Showing saved data"
             error = failures.joinToString("  •  ")
+            } finally {
+                refreshing = false
+            }
         }
     }
 
@@ -128,7 +135,7 @@ fun APSRTCApp() {
                     },
                     actions = {
                         TextButton(onClick = { telugu = !telugu }) { Text(if (telugu) "EN" else "తె") }
-                        IconButton(onClick = { refreshLive() }) { Icon(Icons.Default.Refresh, "Refresh live buses") }
+                        IconButton(onClick = { refreshLive() }, enabled = !refreshing) { Icon(Icons.Default.Refresh, "Refresh live buses") }
                     }
                 )
             },
