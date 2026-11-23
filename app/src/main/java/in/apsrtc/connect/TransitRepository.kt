@@ -66,11 +66,21 @@ class TransitRepository(private val context: Context) {
     suspend fun loadStaticData(): Pair<List<Stop>, List<BusRoute>> = withContext(Dispatchers.IO) {
         val cache = java.io.File(context.cacheDir, "apsrtc.zip")
         if (!cache.exists() || cache.length() < 100_000L || System.currentTimeMillis() - cache.lastModified() > 7L * 24 * 60 * 60 * 1000) {
-            val request = Request.Builder().url("$base/gtfs/apsrtc.zip")
-                .header("User-Agent", "APSRTC-Connect/1.0 (Android)").build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) error("GTFS download failed: ${response.code}")
-                response.body?.byteStream()?.use { input -> cache.outputStream().use(input::copyTo) }
+            val temp = java.io.File(context.cacheDir, "apsrtc.zip.download")
+            try {
+                val request = Request.Builder().url("$base/gtfs/apsrtc.zip")
+                    .header("User-Agent", "APSRTC-Connect/1.2 (Android)").build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) error("GTFS refresh failed: HTTP ${response.code}")
+                    response.body?.byteStream()?.use { input -> temp.outputStream().use(input::copyTo) }
+                }
+                if (temp.length() < 100_000L) error("GTFS download was incomplete")
+                if (cache.exists()) cache.delete()
+                if (!temp.renameTo(cache)) error("Could not save refreshed GTFS cache")
+            } catch (e: Exception) {
+                temp.delete()
+                if (!cache.exists() || cache.length() < 100_000L) throw e
+                // Keep using the last valid archive when the upstream feed is rate-limited or offline.
             }
         }
         val stops = mutableListOf<Stop>()
