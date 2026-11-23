@@ -78,7 +78,7 @@ object UpdateManager {
         return (context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
     }
 
-    suspend fun waitForDownload(context: Context, id: Long, version: String): File = withContext(Dispatchers.IO) {
+    suspend fun waitForDownload(context: Context, id: Long, update: AppUpdate): File = withContext(Dispatchers.IO) {
         val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         repeat(300) {
             val query = DownloadManager.Query().setFilterById(id)
@@ -86,9 +86,9 @@ object UpdateManager {
                 if (cursor.moveToFirst()) {
                     when (cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))) {
                         DownloadManager.STATUS_SUCCESSFUL -> {
-                            val file = apkFile(context, version)
-                            if (file.exists() && file.length() > 0L && (file.length() == 0L || file.length() > 0L)) return@withContext file
-                            throw IllegalStateException("Downloaded APK could not be found")
+                            val file = apkFile(context, update.version)
+                            if (file.exists() && file.length() > 0L && (update.sizeBytes <= 0L || file.length() == update.sizeBytes)) return@withContext file
+                            throw IllegalStateException("Downloaded APK is incomplete or its size does not match the release.")
                         }
                         DownloadManager.STATUS_FAILED -> {
                             val reason = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
