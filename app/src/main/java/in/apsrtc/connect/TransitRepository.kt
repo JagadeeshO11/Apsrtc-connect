@@ -24,16 +24,28 @@ class TransitRepository(private val context: Context) {
     private val base = "https://maps.reclaim.city"
 
     private fun get(url: String): String {
-        val request = Request.Builder().url(url).header("User-Agent", "APSRTC-Connect/1.0 (Android)").build()
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) error("Server returned ${response.code}")
-            return response.body?.string() ?: error("Empty response")
+        val request = Request.Builder().url(url).header("User-Agent", "APSRTC-Connect/1.1 (Android)").header("Accept", "application/json").build()
+        var lastError: Exception? = null
+        repeat(3) { attempt ->
+            try {
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) return response.body?.string() ?: error("Empty response from ${request.url.encodedPath}")
+                    val code = response.code
+                    if (code !in listOf(408, 429, 500, 502, 503, 504)) error("API ${request.url.encodedPath}: HTTP $code")
+                    lastError = java.io.IOException("API ${request.url.encodedPath}: HTTP $code")
+                }
+            } catch (e: Exception) {
+                lastError = e
+                if (e.message?.contains("HTTP 4") == true && !e.message.orEmpty().contains("408") && !e.message.orEmpty().contains("429")) throw e
+            }
+            if (attempt < 2) Thread.sleep(500L * (attempt + 1))
         }
+        throw lastError ?: java.io.IOException("API request failed")
     }
 
     suspend fun loadStaticData(): Pair<List<Stop>, List<BusRoute>> = withContext(Dispatchers.IO) {
         val cache = java.io.File(context.cacheDir, "apsrtc.zip")
-        if (!cache.exists() || cache.length() < 100_000L) {
+        if (!cache.exists() || cache.length() < 100_000L || System.currentTimeMillis() - cache.lastModified() > 7L * 24 * 60 * 60 * 1000) {
             val request = Request.Builder().url("$base/gtfs/apsrtc.zip")
                 .header("User-Agent", "APSRTC-Connect/1.0 (Android)").build()
             client.newCall(request).execute().use { response ->
@@ -127,6 +139,19 @@ class TransitRepository(private val context: Context) {
     }
 
     suspend fun status(): String = withContext(Dispatchers.IO) { get("$base/apsrtc/rt/status.json") }
+
+    fun saveLiveBuses(items: List<LiveBus>) { prefs.edit().putString("last_live_buses", com.google.gson.Gson().toJson(items)).apply() }
+    fun cachedLiveBuses(): List<LiveBus> = runCatching {
+        val raw = prefs.getString("last_live_buses", null) ?: return emptyList()
+        val type = object : com.google.gson.reflect.TypeToken<List<LiveBus>>() {}.type
+        com.google.gson.Gson().fromJson<List<LiveBus>>(raw, type) ?: emptyList()
+    }.getOrDefault(emptyList())
+    fun saveArrivals(items: List<Arrival>) { prefs.edit().putString("last_arrivals", com.google.gson.Gson().toJson(items)).apply() }
+    fun cachedArrivals(): List<Arrival> = runCatching {
+        val raw = prefs.getString("last_arrivals", null) ?: return emptyList()
+        val type = object : com.google.gson.reflect.TypeToken<List<Arrival>>() {}.type
+        com.google.gson.Gson().fromJson<List<Arrival>>(raw, type) ?: emptyList()
+    }.getOrDefault(emptyList())
 
     suspend fun liveBuses(routes: List<BusRoute> = emptyList()): List<LiveBus> = withContext(Dispatchers.IO) {
         val root = JsonParser.parseString(get("$base/apsrtc/rt/vehicle_positions.json")).asJsonObject
