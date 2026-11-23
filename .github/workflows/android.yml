@@ -3,8 +3,8 @@ name: APSRTC Connect Android APK
 on:
   push:
     paths:
-      - 'APSRTC-Connect/**'
-      - '.github/workflows/apsrtc-connect-android.yml'
+      - '**'
+      - '.github/workflows/android.yml'
   workflow_dispatch:
 
 jobs:
