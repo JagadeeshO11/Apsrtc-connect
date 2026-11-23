@@ -112,6 +112,18 @@ class TransitRepository(private val context: Context) {
     }
 
     suspend fun loadStaticData(): Pair<List<Stop>, List<BusRoute>> = withContext(Dispatchers.IO) {
+        val gson = com.google.gson.Gson()
+        val cachedStops = prefs.getString("static_stops_json", null)
+        val cachedRoutes = prefs.getString("static_routes_json", null)
+        val cachedAt = prefs.getLong("static_loaded_at", 0L)
+        if (!cachedStops.isNullOrBlank() && !cachedRoutes.isNullOrBlank() &&
+            System.currentTimeMillis() - cachedAt < 7L * 24 * 60 * 60 * 1000) {
+            val stopType = object : com.google.gson.reflect.TypeToken<List<Stop>>() {}.type
+            val routeType = object : com.google.gson.reflect.TypeToken<List<BusRoute>>() {}.type
+            val stopList = gson.fromJson<List<Stop>>(cachedStops, stopType)
+            val routeList = gson.fromJson<List<BusRoute>>(cachedRoutes, routeType)
+            if (!stopList.isNullOrEmpty()) return@withContext stopList to routeList.orEmpty()
+        }
         val cache = java.io.File(context.cacheDir, "apsrtc.zip")
         if (cache.exists() && !hasRequiredGtfsFiles(cache)) cache.delete()
         val stale = !cache.exists() || cache.length() < 100_000L ||
@@ -146,7 +158,11 @@ class TransitRepository(private val context: Context) {
             }
         }
         if (stops.isEmpty()) throw java.io.IOException("APSRTC feed downloaded, but it contains no usable stops.")
-        prefs.edit().putLong("static_loaded_at", System.currentTimeMillis()).apply()
+        prefs.edit()
+            .putLong("static_loaded_at", System.currentTimeMillis())
+            .putString("static_stops_json", gson.toJson(stops))
+            .putString("static_routes_json", gson.toJson(routes))
+            .apply()
         stops to routes
     }
 
