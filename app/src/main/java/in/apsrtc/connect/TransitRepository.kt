@@ -277,6 +277,29 @@ class TransitRepository(private val context: Context) {
             .sortedBy { it.departureMinutes }
     }
 
+    suspend fun tripStops(tripId: String, stops: List<Stop>): List<Stop> = withContext(Dispatchers.IO) {
+        if (tripId.isBlank()) return@withContext emptyList()
+        val cache = java.io.File(context.cacheDir, "apsrtc.zip")
+        if (!cache.exists() || !hasRequiredGtfsFiles(cache)) return@withContext emptyList()
+        val orderedIds = mutableListOf<Pair<Int, String>>()
+        ZipInputStream(cache.inputStream().buffered()).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                if (entry.name.substringAfterLast('/') == "stop_times.txt") {
+                    readCsv(zip) { row ->
+                        if (row["trip_id"].orEmpty() == tripId) {
+                            val stopId = row["stop_id"].orEmpty()
+                            if (stopId.isNotBlank()) orderedIds += (row["stop_sequence"]?.toIntOrNull() ?: Int.MAX_VALUE) to stopId
+                        }
+                    }
+                }
+                zip.closeEntry()
+            }
+        }
+        val stopById = stops.associateBy { it.id }
+        orderedIds.sortedBy { it.first }.mapNotNull { stopById[it.second] }.distinctBy { it.id }
+    }
+
     suspend fun status(): String = withContext(Dispatchers.IO) { get("$base/apsrtc/rt/status.json") }
 
     fun saveLiveBuses(items: List<LiveBus>) { prefs.edit().putString("last_live_buses", com.google.gson.Gson().toJson(items)).apply() }
