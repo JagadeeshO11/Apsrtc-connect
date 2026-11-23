@@ -692,6 +692,12 @@ fun MapScreen(
             update = { view ->
                 val html = mapHtml(filtered, origin, destination, selected)
                 if (view.tag != html.hashCode()) {
+                    view.addJavascriptInterface(object {
+                        @android.webkit.JavascriptInterface
+                        fun selectBus(index: Int) {
+                            view.post { onSelect(filtered.getOrNull(index)) }
+                        }
+                    }, "AndroidBus")
                     view.tag = html.hashCode()
                     view.loadDataWithBaseURL("https://www.openstreetmap.org", html, "text/html", "UTF-8", null)
                 }
