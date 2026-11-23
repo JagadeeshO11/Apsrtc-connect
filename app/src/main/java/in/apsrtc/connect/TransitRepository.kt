@@ -25,23 +25,42 @@ class TransitRepository(private val context: Context) {
     private val base = "https://maps.reclaim.city"
 
     private fun get(url: String): String {
-        val request = Request.Builder().url(url).header("User-Agent", "APSRTC-Connect/1.1 (Android)").header("Accept", "application/json").build()
-        var lastError: Exception? = null
-        repeat(3) { attempt ->
-            try {
-                client.newCall(request).execute().use { response ->
-                    if (response.isSuccessful) return response.body?.string() ?: error("Empty response from ${request.url.encodedPath}")
-                    val code = response.code
-                    if (code !in listOf(408, 429, 500, 502, 503, 504)) error("API ${request.url.encodedPath}: HTTP $code")
-                    lastError = java.io.IOException("API ${request.url.encodedPath}: HTTP $code")
-                }
-            } catch (e: Exception) {
-                lastError = e
-                if (e.message?.contains("HTTP 4") == true && !e.message.orEmpty().contains("408") && !e.message.orEmpty().contains("429")) throw e
+        val request = Request.Builder().url(url)
+            .header("User-Agent", "APSRTC-Connect/1.2 (Android)")
+            .header("Accept", "application/json").build()
+        try {
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) return response.body?.string()
+                    ?: error("Empty response from ${request.url.encodedPath}")
+                val code = response.code
+                val retryAfter = response.header("Retry-After")
+                if (code == 429) throw java.io.IOException(
+                    "API rate limit reached (HTTP 429)${retryAfter?.let { ". Retry after $it" } ?: ""}. Cached data will be shown."
+                )
+                throw java.io.IOException("API ${request.url.encodedPath}: HTTP $code")
             }
-            if (attempt < 2) Thread.sleep(500L * (attempt + 1))
+        } catch (e: Exception) {
+            throw e
         }
-        throw lastError ?: java.io.IOException("API request failed")
+    }
+
+    private fun getCached(key: String, url: String, ttlMillis: Long = 60_000L): String {
+        val cached = prefs.getString("${key}_body", null)
+        val fetchedAt = prefs.getLong("${key}_at", 0L)
+        val age = System.currentTimeMillis() - fetchedAt
+        if (!cached.isNullOrBlank() && age in 0..ttlMillis) return cached
+
+        return try {
+            val fresh = get(url)
+            prefs.edit()
+                .putString("${key}_body", fresh)
+                .putLong("${key}_at", System.currentTimeMillis())
+                .apply()
+            fresh
+        } catch (e: Exception) {
+            if (!cached.isNullOrBlank()) cached
+            else throw e
+        }
     }
 
     suspend fun loadStaticData(): Pair<List<Stop>, List<BusRoute>> = withContext(Dispatchers.IO) {
@@ -199,7 +218,7 @@ class TransitRepository(private val context: Context) {
     }.getOrDefault(emptyList())
 
     suspend fun liveBuses(routes: List<BusRoute> = emptyList()): List<LiveBus> = withContext(Dispatchers.IO) {
-        val root = JsonParser.parseString(get("$base/apsrtc/rt/vehicle_positions.json")).asJsonObject
+        val root = JsonParser.parseString(getCached("vehicle_positions", "$base/apsrtc/rt/vehicle_positions.json")).asJsonObject
         val entities = root.getAsJsonArray("entity") ?: return@withContext emptyList()
         entities.mapNotNull { item ->
             runCatching {
@@ -226,7 +245,7 @@ class TransitRepository(private val context: Context) {
     }
 
     suspend fun arrivals(): List<Arrival> = withContext(Dispatchers.IO) {
-        val root = JsonParser.parseString(get("$base/apsrtc/rt/trip_updates.json")).asJsonObject
+        val root = JsonParser.parseString(getCached("trip_updates", "$base/apsrtc/rt/trip_updates.json")).asJsonObject
         val entities = root.getAsJsonArray("entity") ?: return@withContext emptyList()
         buildList {
             entities.forEach { item ->
