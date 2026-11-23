@@ -640,47 +640,57 @@ fun MapScreen(
             "Other GTFS types" -> type != null && type != 3
             else -> true
         }
-    }.let { list -> when (sortBy) {
-        "Fastest" -> list.sortedByDescending { it.speed }
-        "Route" -> list.sortedBy { it.routeId }
-        else -> list.sortedByDescending { it.timestamp }
-    } }
+    }.let { list ->
+        when (sortBy) {
+            "Fastest" -> list.sortedByDescending { it.speed }
+            "Route" -> list.sortedBy { it.routeId }
+            else -> list.sortedByDescending { it.timestamp }
+        }
+    }
     Column(modifier.fillMaxSize()) {
-        Text("Live buses • one map", Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Text(if (origin != null && destination != null) "Journey: ${origin.name} → ${destination.name}" else "All available live vehicle positions", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
+        Text("Live buses • interactive map", Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text(if (origin != null && destination != null) "Journey: ${origin.name} → ${destination.name} • endpoints only" else "All available live vehicle positions", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
         Text(if (lastUpdated > 0L) "GPS last updated ${SimpleDateFormat("dd MMM, hh:mm:ss a", Locale.getDefault()).format(Date(lastUpdated * 1000))}" else "Waiting for first GPS timestamp", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             listOf("All", "GTFS bus (3)", "Other GTFS types").forEach { type ->
-                FilterChip(selected = busType == type, onClick = { busType = type }, label = { Text(type) }, modifier = Modifier.padding(end = 4.dp))
+                FilterChip(selected = busType == type, onClick = { busType = type }, label = { Text(type) }, modifier = Modifier.padding(end = 6.dp))
             }
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Sort:", style = MaterialTheme.typography.labelMedium)
             Spacer(Modifier.width(8.dp))
             listOf("Latest update", "Fastest", "Route").forEach { option ->
-                FilterChip(selected = sortBy == option, onClick = { sortBy = option }, label = { Text(option) }, modifier = Modifier.padding(end = 4.dp))
+                FilterChip(selected = sortBy == option, onClick = { sortBy = option }, label = { Text(option) }, modifier = Modifier.padding(end = 6.dp))
             }
         }
         AndroidView(
             modifier = Modifier.weight(1f).fillMaxWidth(),
-            factory = { ctx -> WebView(ctx).apply {
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = false
-                settings.allowFileAccess = false
-                settings.allowContentAccess = false
-                settings.javaScriptCanOpenWindowsAutomatically = false
-                settings.setSupportMultipleWindows(false)
-                settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                webViewClient = object : WebViewClient() {
-                    override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean =
-                        request?.isForMainFrame == true
+            factory = { ctx ->
+                WebView(ctx).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = false
+                    settings.allowFileAccess = false
+                    settings.allowContentAccess = false
+                    settings.javaScriptCanOpenWindowsAutomatically = false
+                    settings.setSupportMultipleWindows(false)
+                    settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                    addJavascriptInterface(object {
+                        @android.webkit.JavascriptInterface
+                        fun selectBus(index: Int) {
+                            this@apply.post { onSelect(filtered.getOrNull(index)) }
+                        }
+                    }, "AndroidBus")
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean =
+                            request?.isForMainFrame == true
+                    }
+                    val html = mapHtml(filtered, origin, destination, selected)
+                    tag = html.hashCode()
+                    loadDataWithBaseURL("https://www.openstreetmap.org", html, "text/html", "UTF-8", null)
                 }
-                val html = mapHtml(filtered, origin, destination)
-                tag = html.hashCode()
-                loadDataWithBaseURL("https://www.openstreetmap.org", html, "text/html", "UTF-8", null)
-            } },
+            },
             update = { view ->
-                val html = mapHtml(filtered, origin, destination)
+                val html = mapHtml(filtered, origin, destination, selected)
                 if (view.tag != html.hashCode()) {
                     view.tag = html.hashCode()
                     view.loadDataWithBaseURL("https://www.openstreetmap.org", html, "text/html", "UTF-8", null)
@@ -689,36 +699,81 @@ fun MapScreen(
         )
         if (selected != null) {
             val route = routeById[selected.routeId]
-            ListItem(
-                headlineContent = { Text(selected.label) },
-                supportingContent = { Text("${route?.shortName ?: selected.routeId.ifBlank { "Route unavailable" }} • ${if (route?.routeType == 3) "GTFS bus" else "GTFS type ${route?.routeType ?: "unknown"}"} • ${if (selected.timestamp > 0) SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(selected.timestamp * 1000)) else "Time unavailable"}") },
-                trailingContent = { Text(if (selected.speed > 0) "${"%.0f".format(selected.speed * 3.6)} km/h" else "GPS") }
-            )
+            Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                ListItem(
+                    headlineContent = { Text(selected.label) },
+                    supportingContent = { Text("${route?.shortName ?: selected.routeId.ifBlank { "Route unavailable" }} • ${if (route?.routeType == 3) "GTFS bus" else "GTFS type ${route?.routeType ?: "unknown"}"} • ${if (selected.timestamp > 0) SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(selected.timestamp * 1000)) else "Time unavailable"}") },
+                    trailingContent = { Text(if (selected.speed > 0) "${"%.0f".format(selected.speed * 3.6)} km/h" else "GPS") }
+                )
+            }
+        }
+        if (filtered.isNotEmpty()) {
+            Text("Tap a bus marker or a row to inspect it", Modifier.padding(start = 16.dp, top = 6.dp), style = MaterialTheme.typography.labelMedium)
+            LazyColumn(Modifier.heightIn(max = 150.dp).fillMaxWidth()) {
+                items(filtered.take(80)) { bus ->
+                    val route = routeById[bus.routeId]
+                    ListItem(
+                        modifier = Modifier.clickable { onSelect(bus) },
+                        headlineContent = { Text(bus.label) },
+                        supportingContent = { Text("${route?.shortName ?: bus.routeId.ifBlank { "Route not matched" }} • ${if (bus.speed > 0) "${"%.0f".format(bus.speed * 3.6)} km/h" else "Speed unavailable"}") },
+                        trailingContent = { if (selected == bus) Icon(Icons.Default.CheckCircle, "Selected bus", tint = MaterialTheme.colorScheme.primary) else Icon(Icons.Default.ChevronRight, null) }
+                    )
+                    HorizontalDivider()
+                }
+            }
+        } else {
+            Text("No live vehicle positions in this filter. Try All or refresh the feed.", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
         }
         Text("${filtered.size} / ${buses.size} live positions • Auto-refresh every 65 seconds • © OpenStreetMap", Modifier.padding(12.dp), style = MaterialTheme.typography.labelSmall)
     }
 }
 
-private fun mapHtml(buses: List<LiveBus>, origin: Stop?, destination: Stop?): String {
+private fun mapHtml(buses: List<LiveBus>, origin: Stop?, destination: Stop?, selected: LiveBus?): String {
     val gson = com.google.gson.Gson()
     val points = buses.map { bus -> mapOf(
         "lat" to bus.lat, "lon" to bus.lon, "label" to bus.label,
         "route" to bus.routeId, "speed" to bus.speed, "time" to bus.timestamp
     ) }
     val markers = gson.toJson(points)
-    val journey = gson.toJson(listOfNotNull(origin?.let { listOf(it.lat, it.lon, it.name, "From") }, destination?.let { listOf(it.lat, it.lon, it.name, "To") }))
+    val journey = gson.toJson(listOfNotNull(
+        origin?.takeIf { it.lat in -90.0..90.0 && it.lon in -180.0..180.0 && (it.lat != 0.0 || it.lon != 0.0) }?.let { listOf(it.lat, it.lon, it.name, "From") },
+        destination?.takeIf { it.lat in -90.0..90.0 && it.lon in -180.0..180.0 && (it.lat != 0.0 || it.lon != 0.0) }?.let { listOf(it.lat, it.lon, it.name, "To") }
+    ))
+    val selectedLabel = gson.toJson(selected?.label ?: "")
     return """<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <style>html,body,#map{height:100%;margin:0}.bus-dot{background:#b3261e;border:2px solid white;border-radius:50%;width:13px;height:13px;box-shadow:0 1px 5px #555}</style></head><body><div id="map"></div><script>
-    const pts=$markers; const journey=$journey; const map=L.map('map').setView([16.5,80.6],7);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'© OpenStreetMap'}).addTo(map);
+    <style>
+      html,body,#map{height:100%;width:100%;margin:0;background:#eef3f2}
+      .bus-dot{background:#b3261e;border:2px solid white;border-radius:50%;width:14px;height:14px;box-shadow:0 1px 6px #555}
+      .bus-dot.selected{background:#087f5b;width:19px;height:19px;border:3px solid white}
+      .endpoint{background:#315c8a;border:2px solid white;border-radius:50%;width:16px;height:16px}
+      .map-note{position:absolute;z-index:500;bottom:12px;left:12px;background:#fff;padding:7px 10px;border-radius:9px;font:12px sans-serif;box-shadow:0 1px 5px #777}
+    </style></head><body><div id="map"></div><div class="map-note" id="note">Loading map…</div><script>
+    const pts=$markers, journey=$journey, selectedLabel=$selectedLabel;
+    const map=L.map('map',{zoomControl:true}).setView([16.5,80.6],7);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
     const bounds=[];
-    pts.forEach(p=>{const m=L.marker([p.lat,p.lon],{icon:L.divIcon({className:'',html:'<div class="bus-dot"></div>',iconSize:[17,17],iconAnchor:[8,8]})}).addTo(map);
-      m.bindPopup('<b>'+String(p.label).replace(/[&<>"]/g,'')+'</b><br>Route: '+String(p.route||'Not matched')+'<br>Speed: '+(p.speed>0?(p.speed*3.6).toFixed(0)+' km/h':'Unavailable')+'<br>Updated: '+(p.time?new Date(p.time*1000).toLocaleTimeString():'Unknown')); bounds.push([p.lat,p.lon]);});
-    journey.forEach((p,i)=>{L.marker([p[0],p[1]]).addTo(map).bindPopup('<b>'+p[3]+': '+p[2]+'</b>');bounds.push([p[0],p[1]]);});
-    if(journey.length===2){L.polyline([[journey[0][0],journey[0][1]],[journey[1][0],journey[1][1]]],{color:'#315c8a',dashArray:'6 8',weight:4}).addTo(map);}
-    if(bounds.length){map.fitBounds(bounds,{padding:[24,24],maxZoom:12});}
+    const safe=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    let shown=0;
+    pts.forEach((p,i)=>{
+      if(!Number.isFinite(p.lat)||!Number.isFinite(p.lon)||p.lat < -90||p.lat > 90||p.lon < -180||p.lon > 180||(p.lat===0&&p.lon===0)) return;
+      const active=p.label===selectedLabel;
+      const icon=L.divIcon({className:'',html:'<div class="bus-dot '+(active?'selected':'')+'"></div>',iconSize:[24,24],iconAnchor:[12,12]});
+      const m=L.marker([p.lat,p.lon],{icon}).addTo(map);
+      m.bindPopup('<b>'+safe(p.label)+'</b><br>Route: '+safe(p.route||'Not matched')+'<br>Speed: '+(p.speed>0?(p.speed*3.6).toFixed(0)+' km/h':'Unavailable')+'<br>Updated: '+(p.time?new Date(p.time*1000).toLocaleTimeString():'Unknown'));
+      m.on('click',()=>{if(window.AndroidBus&&window.AndroidBus.selectBus)window.AndroidBus.selectBus(i);});
+      bounds.push([p.lat,p.lon]); shown++;
+    });
+    journey.forEach(p=>{
+      if(!Number.isFinite(p[0])||!Number.isFinite(p[1])) return;
+      const icon=L.divIcon({className:'',html:'<div class="endpoint"></div>',iconSize:[20,20],iconAnchor:[10,10]});
+      L.marker([p[0],p[1]],{icon}).addTo(map).bindPopup('<b>'+safe(p[3])+': '+safe(p[2])+'</b>');
+      bounds.push([p[0],p[1]]);
+    });
+    document.getElementById('note').textContent=shown+' live bus markers • tap a marker to select';
+    if(bounds.length) map.fitBounds(bounds,{padding:[28,28],maxZoom:12});
+    setTimeout(()=>map.invalidateSize(),250);
     </script></body></html>"""
 }
 
