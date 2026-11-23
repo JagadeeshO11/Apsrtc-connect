@@ -23,6 +23,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
@@ -42,6 +45,15 @@ fun APSRTCApp() {
     val context = LocalContext.current
     val repo = remember { TransitRepository(context) }
     val scope = rememberCoroutineScope()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var appVisible by remember { mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            appVisible = event == Lifecycle.Event.ON_START || event == Lifecycle.Event.ON_RESUME
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     var telugu by remember { mutableStateOf(false) }
     var tab by remember { mutableStateOf(0) }
     var stops by remember { mutableStateOf<List<Stop>>(emptyList()) }
@@ -106,9 +118,15 @@ fun APSRTCApp() {
         runCatching { val data = repo.loadStaticData(); stops = data.first; routes = data.second }
             .onFailure { error = it.message ?: "Could not load APSRTC route data" }
         loading = false
-        while (true) {
+    }
+
+    LaunchedEffect(appVisible) {
+        if (appVisible) {
             refreshLive()
-            delay(65_000)
+            while (true) {
+                delay(65_000)
+                if (appVisible) refreshLive()
+            }
         }
     }
 
