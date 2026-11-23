@@ -390,6 +390,7 @@ fun JourneyResultsScreen(
     selectedRouteType: Int?, selectedTimeWindow: String?, onRouteTypeChange: (Int?) -> Unit, onTimeWindowChange: (String?) -> Unit, favorites: Set<String>, toggleFavorite: (String) -> Unit,
     onSelectService: (JourneyOption) -> Unit
 ) {
+    var departureSort by remember { mutableStateOf("Earliest first") }
     val filtered = results.filter { journey ->
         val typeMatch = selectedRouteType == null || journey.route.routeType == selectedRouteType
         val hour = (((journey.departureMinutes % 1440) + 1440) % 1440) / 60
@@ -401,6 +402,12 @@ fun JourneyResultsScreen(
             else -> true
         }
         typeMatch && timeMatch
+    }.let { matches ->
+        when (departureSort) {
+            "Latest first" -> matches.sortedByDescending { it.departureMinutes }
+            "Shortest trip" -> matches.sortedBy { it.durationMinutes }
+            else -> matches.sortedBy { it.departureMinutes }
+        }
     }
     LazyColumn(modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
         item {
@@ -411,9 +418,17 @@ fun JourneyResultsScreen(
                     Text("${filtered.size} of ${results.size} scheduled trips • GTFS timetable", style = MaterialTheme.typography.bodySmall)
                 }
             }
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                Text("Sort:", style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.width(6.dp))
+                listOf("Earliest first", "Latest first", "Shortest trip").forEach { option ->
+                    FilterChip(selected = departureSort == option, onClick = { departureSort = option },
+                        label = { Text(option) }, modifier = Modifier.padding(end = 6.dp))
+                }
+            }
         }
         if (results.isEmpty()) item { Text("No scheduled trip visits the origin first and destination later in the same trip.") }
-        if (filtered.isEmpty() && results.isNotEmpty()) item { Text("No trips match this GTFS route-type filter.") }
+        if (filtered.isEmpty() && results.isNotEmpty()) item { Text("No trips match the selected route type and departure-time filters. Clear filters to see all trips.") }
         items(filtered) { journey ->
             ElevatedCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -465,10 +480,19 @@ fun ServiceDetailScreen(modifier: Modifier, journey: JourneyOption) {
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 factory = { ctx -> WebView(ctx).apply {
                     settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = false
                     webViewClient = WebViewClient()
-                    loadDataWithBaseURL("https://www.openstreetmap.org", serviceRouteMapHtml(journey), "text/html", "UTF-8", null)
+                    val html = serviceRouteMapHtml(journey)
+                    tag = html.hashCode()
+                    loadDataWithBaseURL("https://www.openstreetmap.org", html, "text/html", "UTF-8", null)
                 } },
-                update = { it.loadDataWithBaseURL("https://www.openstreetmap.org", serviceRouteMapHtml(journey), "text/html", "UTF-8", null) }
+                update = { view ->
+                    val html = serviceRouteMapHtml(journey)
+                    if (view.tag != html.hashCode()) {
+                        view.tag = html.hashCode()
+                        view.loadDataWithBaseURL("https://www.openstreetmap.org", html, "text/html", "UTF-8", null)
+                    }
+                }
             )
         } else {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -620,10 +644,19 @@ fun MapScreen(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             factory = { ctx -> WebView(ctx).apply {
                 settings.javaScriptEnabled = true
+                settings.domStorageEnabled = false
                 webViewClient = WebViewClient()
-                loadDataWithBaseURL("https://www.openstreetmap.org", mapHtml(filtered, origin, destination), "text/html", "UTF-8", null)
+                val html = mapHtml(filtered, origin, destination)
+                tag = html.hashCode()
+                loadDataWithBaseURL("https://www.openstreetmap.org", html, "text/html", "UTF-8", null)
             } },
-
+            update = { view ->
+                val html = mapHtml(filtered, origin, destination)
+                if (view.tag != html.hashCode()) {
+                    view.tag = html.hashCode()
+                    view.loadDataWithBaseURL("https://www.openstreetmap.org", html, "text/html", "UTF-8", null)
+                }
+            }
         )
         if (selected != null) {
             val route = routeById[selected.routeId]
