@@ -167,6 +167,10 @@ fun APSRTCApp() {
                 }
             }
         }
+        else {
+            // Ask once on first launch. Stop search/autocomplete does not depend on accepting this.
+            locationPermission.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
+        }
         delay(1800)
         checkForAppUpdate(false)
     }
