@@ -116,14 +116,18 @@ class TransitRepository(private val context: Context) {
         val cachedStops = prefs.getString("static_stops_json", null)
         val cachedRoutes = prefs.getString("static_routes_json", null)
         val cachedAt = prefs.getLong("static_loaded_at", 0L)
-        if (!cachedStops.isNullOrBlank() && !cachedRoutes.isNullOrBlank() &&
-            System.currentTimeMillis() - cachedAt < 7L * 24 * 60 * 60 * 1000) {
+        // Stop and route catalogues are static GTFS data. Always serve a valid
+        // local snapshot immediately, even when it is older than seven days.
+        // This prevents a slow GTFS download from blocking stop suggestions/search.
+        if (!cachedStops.isNullOrBlank() && !cachedRoutes.isNullOrBlank()) {
             val stopType = object : com.google.gson.reflect.TypeToken<List<Stop>>() {}.type
             val routeType = object : com.google.gson.reflect.TypeToken<List<BusRoute>>() {}.type
-            val stopList = gson.fromJson<List<Stop>>(cachedStops, stopType)
-            val routeList = gson.fromJson<List<BusRoute>>(cachedRoutes, routeType)
+            val stopList = runCatching { gson.fromJson<List<Stop>>(cachedStops, stopType) }.getOrNull()
+            val routeList = runCatching { gson.fromJson<List<BusRoute>>(cachedRoutes, routeType) }.getOrNull()
             if (!stopList.isNullOrEmpty()) return@withContext stopList to routeList.orEmpty()
         }
+
+        // First launch only: bootstrap the offline catalogue from the GTFS archive.
         val cache = java.io.File(context.cacheDir, "apsrtc.zip")
         if (cache.exists() && !hasRequiredGtfsFiles(cache)) cache.delete()
         val stale = !cache.exists() || cache.length() < 100_000L ||
