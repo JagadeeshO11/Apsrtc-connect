@@ -59,6 +59,8 @@ fun APSRTCApp() {
     var telugu by remember { mutableStateOf(false) }
     var tab by remember { mutableStateOf(0) }
     var resultsPage by remember { mutableStateOf(false) }
+    var serviceDetailPage by remember { mutableStateOf(false) }
+    var selectedJourney by remember { mutableStateOf<JourneyOption?>(null) }
     var showRouteFilters by remember { mutableStateOf(false) }
     var selectedGtfsRouteType by remember { mutableStateOf<Int?>(null) }
     var stops by remember { mutableStateOf<List<Stop>>(emptyList()) }
@@ -173,13 +175,13 @@ fun APSRTCApp() {
                 TopAppBar(
                     title = {
                         Column {
-                            Text(if (resultsPage) "Matching buses" else "APSRTC Connect", fontWeight = FontWeight.Bold)
+                            Text(if (serviceDetailPage) "Selected service" else if (resultsPage) "Matching buses" else "APSRTC Connect", fontWeight = FontWeight.Bold)
                             Text(if (resultsPage) "${origin?.name.orEmpty()} → ${destination?.name.orEmpty()}" else if (telugu) "ప్రత్యక్ష బస్సులు • స్మార్ట్ ప్రయాణం" else "Live network • Smarter journeys", style = MaterialTheme.typography.labelSmall)
                         }
                     },
-                    navigationIcon = { if (resultsPage) IconButton(onClick = { resultsPage = false }) { Icon(Icons.Default.ArrowBack, "Back to search") } },
+                    navigationIcon = { if (serviceDetailPage) IconButton(onClick = { serviceDetailPage = false }) { Icon(Icons.Default.ArrowBack, "Back to matching buses") } else if (resultsPage) IconButton(onClick = { resultsPage = false }) { Icon(Icons.Default.ArrowBack, "Back to search") } },
                     actions = {
-                        if (resultsPage) IconButton(onClick = { showRouteFilters = true }) { Icon(Icons.Default.FilterList, "Filter bus services") }
+                        if (resultsPage && !serviceDetailPage) IconButton(onClick = { showRouteFilters = true }) { Icon(Icons.Default.FilterList, "Filter bus services") }
                         TextButton(onClick = { telugu = !telugu }) { Text(if (telugu) "EN" else "తె") }
                         IconButton(onClick = { scope.launch { checkForAppUpdate(true) } }) { Icon(Icons.Default.SystemUpdate, "Check app updates") }
                         IconButton(onClick = { refreshLive() }, enabled = !refreshing) { Icon(Icons.Default.Refresh, "Refresh live buses") }
@@ -195,8 +197,12 @@ fun APSRTCApp() {
                 }
             }
         ) { padding ->
-            if (resultsPage) {
-                JourneyResultsScreen(Modifier.padding(padding), origin, destination, routeResults, selectedGtfsRouteType, favorites) { id -> favorites = repo.toggleFavorite(id) }
+            if (serviceDetailPage && selectedJourney != null) {
+                ServiceDetailScreen(Modifier.padding(padding), selectedJourney!!)
+            } else if (resultsPage) {
+                JourneyResultsScreen(Modifier.padding(padding), origin, destination, routeResults, selectedGtfsRouteType, favorites,
+                    { id -> favorites = repo.toggleFavorite(id) },
+                    { journey -> selectedJourney = journey; serviceDetailPage = true })
             } else when (tab) {
                 0 -> SearchScreen(
                     Modifier.padding(padding), telugu, loading, staticError, stops, originText, destinationText,
@@ -230,7 +236,7 @@ fun APSRTCApp() {
                 else -> FavoritesScreen(Modifier.padding(padding), favorites, routes, telugu) { id -> favorites = repo.toggleFavorite(id) }
             }
         }
-        if (showRouteFilters) {
+        if (showRouteFilters && resultsPage && !serviceDetailPage) {
             val availableTypes = routeResults.map { it.route.routeType }.distinct().sorted()
             AlertDialog(
                 onDismissRequest = { showRouteFilters = false },
@@ -352,7 +358,8 @@ fun SearchScreen(
 @Composable
 fun JourneyResultsScreen(
     modifier: Modifier, origin: Stop?, destination: Stop?, results: List<JourneyOption>,
-    selectedRouteType: Int?, favorites: Set<String>, toggleFavorite: (String) -> Unit
+    selectedRouteType: Int?, favorites: Set<String>, toggleFavorite: (String) -> Unit,
+    onSelectService: (JourneyOption) -> Unit
 ) {
     val filtered = results.filter { selectedRouteType == null || it.route.routeType == selectedRouteType }
     LazyColumn(modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
@@ -391,6 +398,12 @@ fun JourneyResultsScreen(
                         Text("●  ${destination?.name.orEmpty()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                     }
                     Text("GTFS route_type: ${journey.route.routeType} • APSRTC service class not specified in feed", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (journey.routeStops.size >= 2) "Route map preview • ${journey.routeStops.size} GTFS stops" else "Route map unavailable: missing stop coordinates", style = MaterialTheme.typography.labelSmall)
+                    Button(onClick = { onSelectService(journey) }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.Map, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("View service & route map")
+                    }
                 }
             }
         }
