@@ -159,7 +159,7 @@ fun APSRTCApp() {
                     nearbyStops, { locationPermission.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION)) },
                     error
                 )
-                1 -> MapScreen(Modifier.padding(padding), buses, routes, origin, destination, selectedBus) { selectedBus = it }
+                1 -> MapScreen(Modifier.padding(padding), buses, routes, origin, destination, selectedBus, lastUpdated) { selectedBus = it }
                 2 -> LiveScreen(Modifier.padding(padding), status, buses, arrivals, stops, telugu, lastUpdated, error)
                 else -> FavoritesScreen(Modifier.padding(padding), favorites, routes, telugu) { id -> favorites = repo.toggleFavorite(id) }
             }
@@ -294,7 +294,7 @@ fun LiveScreen(modifier: Modifier, status: String, buses: List<LiveBus>, arrival
 @Composable
 fun MapScreen(
     modifier: Modifier, buses: List<LiveBus>, routes: List<BusRoute>,
-    origin: Stop?, destination: Stop?, selected: LiveBus?, onSelect: (LiveBus?) -> Unit
+    origin: Stop?, destination: Stop?, selected: LiveBus?, lastUpdated: Long, onSelect: (LiveBus?) -> Unit
 ) {
     var busType by remember { mutableStateOf("All") }
     var sortBy by remember { mutableStateOf("Latest update") }
@@ -317,6 +317,7 @@ fun MapScreen(
     Column(modifier.fillMaxSize()) {
         Text("Live buses • one map", Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         Text(if (origin != null && destination != null) "Journey: ${origin.name} → ${destination.name}" else "All available live vehicle positions", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
+        Text(if (lastUpdated > 0L) "GPS last updated ${SimpleDateFormat("dd MMM, hh:mm:ss a", Locale.getDefault()).format(Date(lastUpdated * 1000))}" else "Waiting for first GPS timestamp", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             listOf("All", "Ordinary", "Express", "Premium", "Other").forEach { type ->
                 FilterChip(selected = busType == type, onClick = { busType = type }, label = { Text(type) }, modifier = Modifier.padding(end = 4.dp))
