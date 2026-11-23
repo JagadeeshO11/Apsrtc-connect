@@ -46,7 +46,7 @@ fun APSRTCApp() {
     var tab by remember { mutableStateOf(0) }
     var stops by remember { mutableStateOf<List<Stop>>(emptyList()) }
     var routes by remember { mutableStateOf<List<BusRoute>>(emptyList()) }
-    var buses by remember { mutableStateOf<List<LiveBus>>(emptyList()) }
+    var buses by remember { mutableStateOf(repo.cachedLiveBuses()) }
     var status by remember { mutableStateOf("Connecting to APSRTC live feed…") }
     var error by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(true) }
@@ -66,19 +66,36 @@ fun APSRTCApp() {
             }.take(10)
         }
     }
-    var arrivals by remember { mutableStateOf<List<Arrival>>(emptyList()) }
+    var arrivals by remember { mutableStateOf(repo.cachedArrivals()) }
+    var lastUpdated by remember { mutableStateOf(context.getSharedPreferences("apsrtc_connect", android.content.Context.MODE_PRIVATE).getLong("last_live_success", 0L)) }
     var favorites by remember { mutableStateOf(repo.favorites()) }
     var selectedBus by remember { mutableStateOf<LiveBus?>(null) }
 
     fun refreshLive() {
         scope.launch {
-            runCatching {
-                buses = repo.liveBuses()
-                arrivals = repo.arrivals()
-                val json = repo.status()
-                val feedTime = runCatching { com.google.gson.JsonParser.parseString(json).asJsonObject.get("feed_time").asLong }.getOrNull()
-                status = if (feedTime != null) "Live feed updated ${SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(feedTime * 1000))} • ${buses.size} buses" else "${buses.size} buses in feed"
-            }.onFailure { status = "Live feed unavailable • showing last loaded data" }
+            val failures = mutableListOf<String>()
+            var positionsOk = false
+            runCatching { repo.liveBuses(routes) }
+                .onSuccess { fresh ->
+                    buses = fresh; repo.saveLiveBuses(fresh); positionsOk = true
+                    val newest = fresh.maxOfOrNull { it.timestamp } ?: 0L
+                    if (newest > 0L) { lastUpdated = newest; context.getSharedPreferences("apsrtc_connect", android.content.Context.MODE_PRIVATE).edit().putLong("last_live_success", newest).apply() }
+                }
+                .onFailure { failures += "Vehicle feed: ${it.message ?: "network error"}"; if (buses.isEmpty()) buses = repo.cachedLiveBuses() }
+            runCatching { repo.arrivals() }
+                .onSuccess { fresh -> arrivals = fresh; repo.saveArrivals(fresh) }
+                .onFailure { failures += "Arrival feed: ${it.message ?: "network error"}"; if (arrivals.isEmpty()) arrivals = repo.cachedArrivals() }
+            runCatching { repo.status() }
+                .onSuccess { raw ->
+                    val obj = com.google.gson.JsonParser.parseString(raw).asJsonObject
+                    val feedTime = obj.get("feed_time")?.asLong ?: 0L
+                    if (feedTime > 0L) { lastUpdated = feedTime; context.getSharedPreferences("apsrtc_connect", android.content.Context.MODE_PRIVATE).edit().putLong("last_live_success", feedTime).apply() }
+                    val count = obj.get("vehicles")?.asInt ?: buses.size
+                    status = if (feedTime > 0L) "Feed time ${SimpleDateFormat("hh:mm:ss a", Locale.getDefault()).format(Date(feedTime * 1000))} • $count vehicles" else "$count vehicles reported"
+                }
+                .onFailure { failures += "Status feed: ${it.message ?: "network error"}" }
+            if (status.startsWith("Connecting")) status = if (positionsOk) "Live vehicle positions loaded" else "Showing saved data"
+            error = failures.joinToString("  •  ")
         }
     }
 
@@ -133,7 +150,7 @@ fun APSRTCApp() {
                     error
                 )
                 1 -> MapScreen(Modifier.padding(padding), buses, routes, origin, destination, selectedBus) { selectedBus = it }
-                2 -> LiveScreen(Modifier.padding(padding), status, buses, arrivals, stops, telugu)
+                2 -> LiveScreen(Modifier.padding(padding), status, buses, arrivals, stops, telugu, lastUpdated, error)
                 else -> FavoritesScreen(Modifier.padding(padding), favorites, routes, telugu) { id -> favorites = repo.toggleFavorite(id) }
             }
         }
@@ -205,10 +222,30 @@ fun StopAutocomplete(label: String, value: String, stops: List<Stop>, onValue: (
 }
 
 @Composable
-fun LiveScreen(modifier: Modifier, status: String, buses: List<LiveBus>, arrivals: List<Arrival>, stops: List<Stop>, telugu: Boolean) {
+fun LiveScreen(modifier: Modifier, status: String, buses: List<LiveBus>, arrivals: List<Arrival>, stops: List<Stop>, telugu: Boolean, lastUpdated: Long, apiError: String) {
     Column(modifier.fillMaxSize().padding(16.dp)) {
         Text(if (telugu) "ప్రత్యక్ష బస్సులు" else "Live APSRTC buses", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+            Column(Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Sensors, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp)); Text("LIVE NETWORK", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.weight(1f)); Text("${buses.size} buses", fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(6.dp)); Text(status, style = MaterialTheme.typography.bodySmall)
+                Text(if (lastUpdated > 0L) "Last successful GPS update: ${SimpleDateFormat("dd MMM, hh:mm:ss a", Locale.getDefault()).format(Date(lastUpdated * 1000))}" else "Last successful GPS update: Not received yet", style = MaterialTheme.typography.labelMedium)
+                if (lastUpdated > 0L) {
+                    val age = ((System.currentTimeMillis() / 1000L) - lastUpdated).coerceAtLeast(0L)
+                    Text(if (age <= 90) "GPS data is fresh" else "GPS data may be stale • ${age / 60} min old", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+        if (apiError.isNotBlank()) {
+            Spacer(Modifier.height(8.dp))
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                Text("Some feeds unavailable: $apiError. Other feeds continue independently; saved data is retained.", Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodySmall)
+            }
+        }
         Spacer(Modifier.height(12.dp))
         if (buses.isEmpty() && arrivals.isEmpty()) {
             Text(if (telugu) "ప్రస్తుతం లైవ్ సమాచారం అందుబాటులో లేదు" else "No live vehicle positions or arrival updates are currently available.")
