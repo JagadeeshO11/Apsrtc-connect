@@ -146,9 +146,27 @@ fun APSRTCApp() {
     }
 
     LaunchedEffect(Unit) {
+        // Suggestions always come from the offline GTFS stop catalogue; location is optional.
         runCatching { val data = repo.loadStaticData(); stops = data.first; routes = data.second; staticError = "" }
             .onFailure { staticError = it.message ?: "Could not load APSRTC stop data" }
         loading = false
+        val fineGranted = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val coarseGranted = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (fineGranted || coarseGranted) {
+            runCatching {
+                fusedLocation.lastLocation.addOnSuccessListener { loc ->
+                    if (loc != null && stops.isNotEmpty()) {
+                        nearbyStops = stops.asSequence().filter { it.lat in -90.0..90.0 && it.lon in -180.0..180.0 && (it.lat != 0.0 || it.lon != 0.0) }
+                            .sortedBy { stop ->
+                                val result = FloatArray(1)
+                                android.location.Location.distanceBetween(loc.latitude, loc.longitude, stop.lat, stop.lon, result)
+                                result[0]
+                            }.take(10).toList()
+                        detectedLocationLabel = "Nearby stops updated"
+                    }
+                }
+            }
+        }
         delay(1800)
         checkForAppUpdate(false)
     }
