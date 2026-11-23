@@ -481,7 +481,15 @@ fun ServiceDetailScreen(modifier: Modifier, journey: JourneyOption) {
                 factory = { ctx -> WebView(ctx).apply {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = false
-                    webViewClient = WebViewClient()
+                    settings.allowFileAccess = false
+                    settings.allowContentAccess = false
+                    settings.javaScriptCanOpenWindowsAutomatically = false
+                    settings.setSupportMultipleWindows(false)
+                    settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean =
+                            request?.isForMainFrame == true
+                    }
                     val html = serviceRouteMapHtml(journey)
                     tag = html.hashCode()
                     loadDataWithBaseURL("https://www.openstreetmap.org", html, "text/html", "UTF-8", null)
@@ -645,7 +653,15 @@ fun MapScreen(
             factory = { ctx -> WebView(ctx).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = false
-                webViewClient = WebViewClient()
+                settings.allowFileAccess = false
+                settings.allowContentAccess = false
+                settings.javaScriptCanOpenWindowsAutomatically = false
+                settings.setSupportMultipleWindows(false)
+                settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean =
+                        request?.isForMainFrame == true
+                }
                 val html = mapHtml(filtered, origin, destination)
                 tag = html.hashCode()
                 loadDataWithBaseURL("https://www.openstreetmap.org", html, "text/html", "UTF-8", null)
