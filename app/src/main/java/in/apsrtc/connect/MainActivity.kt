@@ -107,7 +107,12 @@ fun APSRTCApp() {
         updateStatus = "Checking GitHub for updates…"
         try {
             updateInfo = UpdateManager.checkLatest()
-            updateStatus = if (updateInfo == null) "Already using the latest version." else "A new version is available: " + updateInfo!!.version
+            downloadedUpdate = updateInfo?.let { UpdateManager.cachedApk(context, it) }
+            updateStatus = when {
+                updateInfo == null -> "Already using the latest version. No APK downloaded."
+                downloadedUpdate != null -> "This update is already on your phone. No data will be downloaded again."
+                else -> "A new version is available: " + updateInfo!!.version
+            }
             if (updateInfo != null || showUpToDate) updateDialogVisible = true
         } catch (e: Exception) {
             updateStatus = e.message ?: "Could not check for updates."
@@ -292,7 +297,11 @@ fun APSRTCApp() {
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(updateStatus)
-                        updateInfo?.let { Text("Latest version: " + it.version, fontWeight = FontWeight.SemiBold) }
+                        updateInfo?.let {
+                            Text("Latest version: " + it.version, fontWeight = FontWeight.SemiBold)
+                            if (it.sizeBytes > 0L) Text("APK size: %.1f MB".format(it.sizeBytes / 1048576.0), style = MaterialTheme.typography.bodySmall)
+                            Text("Only the APK update is downloaded. Your stops, routes and saved data stay on the phone.", style = MaterialTheme.typography.bodySmall)
+                        }
                         if (downloadingUpdate) LinearProgressIndicator(Modifier.fillMaxWidth())
                         if (downloadedUpdate != null) Text("APK downloaded. Tap Install to continue.")
                     }
@@ -307,8 +316,12 @@ fun APSRTCApp() {
                                 downloadingUpdate = true
                                 updateStatus = "Downloading update…"
                                 try {
-                                    val id = UpdateManager.download(context, url)
-                                    downloadedUpdate = UpdateManager.waitForDownload(context, id)
+                                    val update = updateInfo ?: error("Update information expired. Check again.")
+                                    val cached = UpdateManager.cachedApk(context, update)
+                                    downloadedUpdate = cached ?: run {
+                                        val id = UpdateManager.download(context, update)
+                                        UpdateManager.waitForDownload(context, id, update.version)
+                                    }
                                     updateStatus = "Download complete."
                                 } catch (e: Exception) { updateStatus = e.message ?: "Download failed." }
                                 finally { downloadingUpdate = false }
