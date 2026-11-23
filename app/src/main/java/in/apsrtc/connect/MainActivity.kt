@@ -201,7 +201,8 @@ fun APSRTCApp() {
             if (serviceDetailPage && selectedJourney != null) {
                 ServiceDetailScreen(Modifier.padding(padding), selectedJourney!!)
             } else if (resultsPage) {
-                JourneyResultsScreen(Modifier.padding(padding), origin, destination, routeResults, selectedGtfsRouteType, selectedTimeWindow, favorites,
+                JourneyResultsScreen(Modifier.padding(padding), origin, destination, routeResults, selectedGtfsRouteType, selectedTimeWindow,
+                    { selectedGtfsRouteType = it }, { selectedTimeWindow = it }, favorites,
                     { id -> favorites = repo.toggleFavorite(id) },
                     { journey -> selectedJourney = journey; serviceDetailPage = true })
             } else when (tab) {
@@ -250,11 +251,17 @@ fun APSRTCApp() {
                             val label = when (type) { 0 -> "Tram (GTFS 0)"; 1 -> "Subway / Metro (GTFS 1)"; 2 -> "Rail (GTFS 2)"; 3 -> "Bus (GTFS 3)"; 4 -> "Ferry (GTFS 4)"; 5 -> "Cable tram (GTFS 5)"; 6 -> "Aerial lift (GTFS 6)"; 7 -> "Funicular (GTFS 7)"; else -> "GTFS type $type" }
                             FilterChip(selected = selectedGtfsRouteType == type, onClick = { selectedGtfsRouteType = type }, label = { Text("$label • ${routeResults.count { it.route.routeType == type }}") })
                         }
+                        Divider()
+                        Text("Departure time", fontWeight = FontWeight.SemiBold)
+                        listOf("All times", "00:00–06:00", "06:00–12:00", "12:00–18:00", "18:00–24:00").forEach { window ->
+                            val value = if (window == "All times") null else window
+                            FilterChip(selected = selectedTimeWindow == value, onClick = { onTimeWindowChange(value) }, label = { Text(window) })
+                        }
                         Text("APSRTC service classes (Palle Velugu, Express, Super Luxury, etc.) are not provided as a dedicated field in this feed. They are not guessed from names.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
                 confirmButton = { TextButton(onClick = { showRouteFilters = false }) { Text("Done") } },
-                dismissButton = { TextButton(onClick = { selectedGtfsRouteType = null }) { Text("Clear") } }
+                dismissButton = { TextButton(onClick = { onRouteTypeChange(null); onTimeWindowChange(null) }) { Text("Clear") } }
             )
         }
         if (updateDialogVisible) {
@@ -359,7 +366,7 @@ fun SearchScreen(
 @Composable
 fun JourneyResultsScreen(
     modifier: Modifier, origin: Stop?, destination: Stop?, results: List<JourneyOption>,
-    selectedRouteType: Int?, selectedTimeWindow: String?, favorites: Set<String>, toggleFavorite: (String) -> Unit,
+    selectedRouteType: Int?, selectedTimeWindow: String?, onRouteTypeChange: (Int?) -> Unit, onTimeWindowChange: (String?) -> Unit, favorites: Set<String>, toggleFavorite: (String) -> Unit,
     onSelectService: (JourneyOption) -> Unit
 ) {
     val filtered = results.filter { journey ->
