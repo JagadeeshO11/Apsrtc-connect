@@ -14,7 +14,7 @@ import java.util.zip.ZipInputStream
 
 data class Stop(val id: String, val name: String, val lat: Double, val lon: Double)
 data class BusRoute(val id: String, val shortName: String, val longName: String, val routeType: Int = 3)
-data class JourneyOption(val route: BusRoute, val departure: String, val arrival: String, val durationMinutes: Int, val intermediateStops: List<String>, val departureMinutes: Int, val arrivalMinutes: Int)
+data class JourneyOption(val route: BusRoute, val departure: String, val arrival: String, val durationMinutes: Int, val intermediateStops: List<String>, val departureMinutes: Int, val arrivalMinutes: Int, val routeStops: List<Stop> = emptyList())
 data class LiveBus(val id: String, val label: String, val routeId: String, val tripId: String, val lat: Double, val lon: Double, val bearing: Double, val timestamp: Long = 0L, val speed: Double = 0.0, val routeName: String = "", val routeLongName: String = "", val startTime: String = "")
 data class Arrival(val tripId: String, val routeId: String, val stopId: String, val arrivalEpoch: Long?, val delay: Int?)
 
@@ -219,8 +219,11 @@ class TransitRepository(private val context: Context) {
             if (arr < dep) arr += 24 * 60
             val routeId = tripRoutes[tripId] ?: return
             val route = routeById[routeId] ?: return
-            val middle = ordered.subList(fromIndex + 1, toIndex).mapNotNull { stopNames[it.id] }.distinct()
-            journeys += JourneyOption(route, depText, arrText, (arr - dep).coerceAtLeast(0), middle, dep, arr)
+            val selectedSegment = ordered.subList(fromIndex, toIndex + 1).mapNotNull { timed ->
+                stops.firstOrNull { it.id == timed.id }
+            }
+            val middle = selectedSegment.drop(1).dropLast(1).map { it.name }
+            journeys += JourneyOption(route, depText, arrText, (arr - dep).coerceAtLeast(0), middle, dep, arr, selectedSegment)
         }
         ZipInputStream(cache.inputStream().buffered()).use { zip ->
             while (true) {
