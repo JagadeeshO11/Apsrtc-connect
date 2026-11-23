@@ -62,7 +62,7 @@ fun APSRTCApp() {
     var serviceDetailPage by remember { mutableStateOf(false) }
     var selectedJourney by remember { mutableStateOf<JourneyOption?>(null) }
     var showRouteFilters by remember { mutableStateOf(false) }
-    var selectedGtfsRouteType by remember { mutableStateOf<Int?>(null) }
+    var selectedGtfsRouteType by remember { mutableStateOf<String?>(null) }
     var selectedTimeWindow by remember { mutableStateOf<String?>(null) }
     var stops by remember { mutableStateOf<List<Stop>>(emptyList()) }
     var routes by remember { mutableStateOf<List<BusRoute>>(emptyList()) }
@@ -265,17 +265,16 @@ fun APSRTCApp() {
             }
         }
         if (showRouteFilters && resultsPage && !serviceDetailPage) {
-            val availableTypes = routeResults.map { it.route.routeType }.distinct().sorted()
+            val availableTypes = routeResults.map { apsrtcServiceClass(it.route) }.distinct().sorted()
             AlertDialog(
                 onDismissRequest = { showRouteFilters = false },
                 title = { Text(if (telugu) "బస్సు ఫిల్టర్లు" else "Filter services") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Filter uses GTFS route_type from the timetable, not guessed route-name keywords.", style = MaterialTheme.typography.bodySmall)
+                        Text("Filter by APSRTC service names found in the route feed.", style = MaterialTheme.typography.bodySmall)
                         FilterChip(selected = selectedGtfsRouteType == null, onClick = { selectedGtfsRouteType = null }, label = { Text("All services (${routeResults.size})") })
                         availableTypes.forEach { type ->
-                            val label = when (type) { 0 -> "Tram (GTFS 0)"; 1 -> "Subway / Metro (GTFS 1)"; 2 -> "Rail (GTFS 2)"; 3 -> "Bus (GTFS 3)"; 4 -> "Ferry (GTFS 4)"; 5 -> "Cable tram (GTFS 5)"; 6 -> "Aerial lift (GTFS 6)"; 7 -> "Funicular (GTFS 7)"; else -> "GTFS type $type" }
-                            FilterChip(selected = selectedGtfsRouteType == type, onClick = { selectedGtfsRouteType = type }, label = { Text("$label • ${routeResults.count { it.route.routeType == type }}") })
+                            FilterChip(selected = selectedGtfsRouteType == type, onClick = { selectedGtfsRouteType = type }, label = { Text("$type • ${routeResults.count { apsrtcServiceClass(it.route) == type }}") })
                         }
                         Divider()
                         Text("Departure time", fontWeight = FontWeight.SemiBold)
@@ -283,7 +282,7 @@ fun APSRTCApp() {
                             val value = if (window == "All times") null else window
                             FilterChip(selected = selectedTimeWindow == value, onClick = { selectedTimeWindow = value }, label = { Text(window) })
                         }
-                        Text("APSRTC service classes (Palle Velugu, Express, Super Luxury, etc.) are not provided as a dedicated field in this feed. They are not guessed from names.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Categories are detected only from APSRTC keywords present in route names. Unmatched routes appear under Other.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
                 confirmButton = { TextButton(onClick = { showRouteFilters = false }) { Text("Done") } },
@@ -400,12 +399,12 @@ fun SearchScreen(
 @Composable
 fun JourneyResultsScreen(
     modifier: Modifier, origin: Stop?, destination: Stop?, results: List<JourneyOption>,
-    selectedRouteType: Int?, selectedTimeWindow: String?, onRouteTypeChange: (Int?) -> Unit, onTimeWindowChange: (String?) -> Unit, favorites: Set<String>, toggleFavorite: (String) -> Unit,
+    selectedRouteType: String?, selectedTimeWindow: String?, onRouteTypeChange: (Int?) -> Unit, onTimeWindowChange: (String?) -> Unit, favorites: Set<String>, toggleFavorite: (String) -> Unit,
     onSelectService: (JourneyOption) -> Unit
 ) {
     var departureSort by remember { mutableStateOf("Earliest first") }
     val filtered = results.filter { journey ->
-        val typeMatch = selectedRouteType == null || journey.route.routeType == selectedRouteType
+        val typeMatch = selectedRouteType == null || apsrtcServiceClass(journey.route) == selectedRouteType
         val hour = (((journey.departureMinutes % 1440) + 1440) % 1440) / 60
         val timeMatch = when (selectedTimeWindow) {
             "00:00–06:00" -> hour in 0..5
@@ -624,22 +623,39 @@ fun LiveScreen(modifier: Modifier, status: String, buses: List<LiveBus>, arrival
     }
 }
 
+private fun apsrtcServiceClass(route: BusRoute): String {
+    val name = "${route.shortName} ${route.longName} ${route.id}".lowercase(Locale.ROOT)
+    return when {
+        Regex("\\bgaruda\\s*plus\\b").containsMatchIn(name) -> "Garuda Plus"
+        Regex("\\bgaruda\\b").containsMatchIn(name) -> "Garuda"
+        Regex("\\bindra\\b").containsMatchIn(name) -> "Indra"
+        Regex("\\bamaravathi\\b|\\bamaravati\\b").containsMatchIn(name) -> "Amaravathi"
+        Regex("\\bvennela\\b").containsMatchIn(name) -> "Vennela"
+        Regex("\\bsuper\\s*luxury\\b").containsMatchIn(name) -> "Super Luxury"
+        Regex("\\bultra\\s*deluxe\\b").containsMatchIn(name) -> "Ultra Deluxe"
+        Regex("\\b(deluxe)\\b").containsMatchIn(name) -> "Deluxe"
+        Regex("\\b(express)\\b").containsMatchIn(name) -> "Express"
+        Regex("\\b(palle\\s*velugu|pallevelugu|pv)\\b").containsMatchIn(name) -> "Palle Velugu"
+        Regex("\\b(city\\s*ordinary|ordinary)\\b").containsMatchIn(name) -> "City Ordinary"
+        Regex("\\bmetro\\s*express\\b").containsMatchIn(name) -> "Metro Express"
+        Regex("\\b(semi\\s*luxury)\\b").containsMatchIn(name) -> "Semi Luxury"
+        Regex("\\b(ac)\\b").containsMatchIn(name) -> "AC Service"
+        else -> "Other"
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MapScreen(
     modifier: Modifier, buses: List<LiveBus>, routes: List<BusRoute>,
     origin: Stop?, destination: Stop?, selected: LiveBus?, lastUpdated: Long, onSelect: (LiveBus?) -> Unit
 ) {
-    var busType by remember { mutableStateOf("All") }
+    var busType by remember { mutableStateOf("All services") }
     var sortBy by remember { mutableStateOf("Latest update") }
     val routeById = remember(routes) { routes.associateBy { it.id } }
     val filtered = buses.filter { bus ->
-        val type = routeById[bus.routeId]?.routeType
-        when (busType) {
-            "GTFS bus (3)" -> type == 3
-            "Other GTFS types" -> type != null && type != 3
-            else -> true
-        }
+        val serviceClass = routeById[bus.routeId]?.let { apsrtcServiceClass(it) } ?: "Other"
+        busType == "All services" || serviceClass == busType
     }.let { list ->
         when (sortBy) {
             "Fastest" -> list.sortedByDescending { it.speed }
@@ -648,11 +664,11 @@ fun MapScreen(
         }
     }
     Column(modifier.fillMaxSize()) {
-        Text("Live buses • interactive map", Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text("Live APSRTC buses • interactive map", Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         Text(if (origin != null && destination != null) "Journey: ${origin.name} → ${destination.name} • endpoints only" else "All available live vehicle positions", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
         Text(if (lastUpdated > 0L) "GPS last updated ${SimpleDateFormat("dd MMM, hh:mm:ss a", Locale.getDefault()).format(Date(lastUpdated * 1000))}" else "Waiting for first GPS timestamp", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            listOf("All", "GTFS bus (3)", "Other GTFS types").forEach { type ->
+            listOf("All services") + routes.map { apsrtcServiceClass(it) }.distinct().sorted().forEach { type ->
                 FilterChip(selected = busType == type, onClick = { busType = type }, label = { Text(type) }, modifier = Modifier.padding(end = 6.dp))
             }
         }
