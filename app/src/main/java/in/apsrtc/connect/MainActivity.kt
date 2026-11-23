@@ -589,27 +589,24 @@ fun MapScreen(
     var busType by remember { mutableStateOf("All") }
     var sortBy by remember { mutableStateOf("Latest update") }
     val routeById = remember(routes) { routes.associateBy { it.id } }
-    fun category(bus: LiveBus): String {
-        val name = (routeById[bus.routeId]?.shortName.orEmpty() + " " + routeById[bus.routeId]?.longName.orEmpty() + " " + bus.routeLongName).lowercase()
-        return when {
-            listOf("pallevelugu", "palle velugu", "ordinary", "city", "metro").any { it in name } -> "Ordinary"
-            listOf("super luxury", "ultra deluxe", "amaravati", "dolphin", "star").any { it in name } -> "Premium"
-            listOf("express", "deluxe", "garuda", "indra", "vennela").any { it in name } -> "Express"
-            else -> "Other"
+    val filtered = buses.filter { bus ->
+        val type = routeById[bus.routeId]?.routeType
+        when (busType) {
+            "GTFS bus (3)" -> type == 3
+            "Other GTFS types" -> type != null && type != 3
+            else -> true
         }
-    }
-    val filtered = buses.filter { busType == "All" || category(it) == busType }
-        .let { list -> when (sortBy) {
-            "Fastest" -> list.sortedByDescending { it.speed }
-            "Route" -> list.sortedBy { it.routeId }
-            else -> list.sortedByDescending { it.timestamp }
-        } }
+    }.let { list -> when (sortBy) {
+        "Fastest" -> list.sortedByDescending { it.speed }
+        "Route" -> list.sortedBy { it.routeId }
+        else -> list.sortedByDescending { it.timestamp }
+    } }
     Column(modifier.fillMaxSize()) {
         Text("Live buses • one map", Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         Text(if (origin != null && destination != null) "Journey: ${origin.name} → ${destination.name}" else "All available live vehicle positions", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
         Text(if (lastUpdated > 0L) "GPS last updated ${SimpleDateFormat("dd MMM, hh:mm:ss a", Locale.getDefault()).format(Date(lastUpdated * 1000))}" else "Waiting for first GPS timestamp", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            listOf("All", "Ordinary", "Express", "Premium", "Other").forEach { type ->
+            listOf("All", "GTFS bus (3)", "Other GTFS types").forEach { type ->
                 FilterChip(selected = busType == type, onClick = { busType = type }, label = { Text(type) }, modifier = Modifier.padding(end = 4.dp))
             }
         }
@@ -627,17 +624,17 @@ fun MapScreen(
                 webViewClient = WebViewClient()
                 loadDataWithBaseURL("https://www.openstreetmap.org", mapHtml(filtered, origin, destination), "text/html", "UTF-8", null)
             } },
-            update = { it.loadDataWithBaseURL("https://www.openstreetmap.org", mapHtml(filtered, origin, destination), "text/html", "UTF-8", null) }
+
         )
         if (selected != null) {
             val route = routeById[selected.routeId]
             ListItem(
                 headlineContent = { Text(selected.label) },
-                supportingContent = { Text("${route?.shortName ?: selected.routeId.ifBlank { "Route unavailable" }} • ${category(selected)} • ${if (selected.timestamp > 0) SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(selected.timestamp * 1000)) else "Time unavailable"}") },
+                supportingContent = { Text("${route?.shortName ?: selected.routeId.ifBlank { "Route unavailable" }} • ${if (route?.routeType == 3) "GTFS bus" else "GTFS type ${route?.routeType ?: "unknown"}"} • ${if (selected.timestamp > 0) SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(selected.timestamp * 1000)) else "Time unavailable"}") },
                 trailingContent = { Text(if (selected.speed > 0) "${"%.0f".format(selected.speed * 3.6)} km/h" else "GPS") }
             )
         }
-        Text("${filtered.size} / ${buses.size} live positions • Auto-refresh every 30 seconds • © OpenStreetMap", Modifier.padding(12.dp), style = MaterialTheme.typography.labelSmall)
+        Text("${filtered.size} / ${buses.size} live positions • Auto-refresh every 65 seconds • © OpenStreetMap", Modifier.padding(12.dp), style = MaterialTheme.typography.labelSmall)
     }
 }
 
