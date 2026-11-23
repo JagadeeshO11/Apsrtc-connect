@@ -410,6 +410,62 @@ fun JourneyResultsScreen(
     }
 }
 
+@Composable
+fun ServiceDetailScreen(modifier: Modifier, journey: JourneyOption) {
+    val stops = journey.routeStops
+    Column(modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(journey.route.shortName.ifBlank { journey.route.id }, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(journey.route.longName.ifBlank { "APSRTC scheduled service" }, style = MaterialTheme.typography.bodyMedium)
+            Text("\${journey.departure} → \${journey.arrival} • \${journey.durationMinutes} min", style = MaterialTheme.typography.titleMedium)
+            Text("Map shows only this selected trip segment, from the chosen origin to destination.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (stops.size >= 2 && stops.all { it.lat in -90.0..90.0 && it.lon in -180.0..180.0 && (it.lat != 0.0 || it.lon != 0.0) }) {
+            AndroidView(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                factory = { ctx -> WebView(ctx).apply {
+                    settings.javaScriptEnabled = true
+                    webViewClient = WebViewClient()
+                    loadDataWithBaseURL("https://www.openstreetmap.org", serviceRouteMapHtml(journey), "text/html", "UTF-8", null)
+                } },
+                update = { it.loadDataWithBaseURL("https://www.openstreetmap.org", serviceRouteMapHtml(journey), "text/html", "UTF-8", null) }
+            )
+        } else {
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Text("This GTFS trip does not contain enough valid coordinates to draw a route map.")
+            }
+        }
+        LazyColumn(Modifier.heightIn(max = 260.dp).fillMaxWidth().padding(horizontal = 16.dp)) {
+            items(stops) { stop ->
+                ListItem(
+                    headlineContent = { Text(stop.name) },
+                    supportingContent = { Text("GTFS stop ID: \${stop.id}") },
+                    leadingContent = { Icon(Icons.Default.Place, null) },
+                    trailingContent = { Text(if (stop == stops.first()) "FROM" else if (stop == stops.last()) "TO" else "STOP") }
+                )
+                HorizontalDivider()
+            }
+        }
+        Text("Scheduled GTFS route preview • Not live bus GPS • © OpenStreetMap", Modifier.padding(12.dp), style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+private fun serviceRouteMapHtml(journey: JourneyOption): String {
+    val points = com.google.gson.Gson().toJson(journey.routeStops.mapIndexed { index, stop ->
+        mapOf("lat" to stop.lat, "lon" to stop.lon, "name" to stop.name, "id" to stop.id,
+            "kind" to if (index == 0) "From" else if (index == journey.routeStops.lastIndex) "To" else "Stop")
+    })
+    return """<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>html,body,#map{height:100%;margin:0}.start{background:#087f5b;border:2px solid white;border-radius:50%;width:16px;height:16px}.mid{background:#315c8a;border:2px solid white;border-radius:50%;width:11px;height:11px}.end{background:#c2410c;border:2px solid white;border-radius:50%;width:16px;height:16px}</style></head><body><div id="map"></div><script>
+    const pts=$points; const map=L.map('map'); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+    const coords=pts.map(p=>[p.lat,p.lon]); L.polyline(coords,{color:'#176b87',weight:5,opacity:.85}).addTo(map);
+    pts.forEach((p,i)=>{const cls=i===0?'start':i===pts.length-1?'end':'mid';const icon=L.divIcon({className:'',html:'<div class="'+cls+'"></div>',iconSize:[20,20],iconAnchor:[10,10]});L.marker([p.lat,p.lon],{icon}).addTo(map).bindPopup('<b>'+String(p.kind)+': '+String(p.name).replace(/[&<>"]/g,'')+'</b><br>GTFS stop: '+String(p.id));});
+    if(coords.length) map.fitBounds(coords,{padding:[28,28],maxZoom:13});
+    </script></body></html>"""
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StopAutocomplete(label: String, value: String, stops: List<Stop>, onValue: (String) -> Unit, onSelect: (Stop) -> Unit) {
