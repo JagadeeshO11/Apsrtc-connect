@@ -297,12 +297,6 @@ fun SearchScreen(
     favorites: Set<String>, toggleFavorite: (String) -> Unit,
     nearbyStops: List<Stop>, findNearby: () -> Unit, error: String, retryStops: () -> Unit
 ) {
-    val visible = results.let { list -> when (sortBy) {
-        "Arrival" -> list.sortedBy { it.arrivalMinutes }
-        "Shortest" -> list.sortedBy { it.durationMinutes }
-        else -> list.sortedBy { it.departureMinutes }
-    } }
-
     Column(modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Text(if (telugu) "మీ ప్రయాణాన్ని ప్లాన్ చేయండి" else "Plan your journey", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
         Text(if (telugu) "APSRTC స్టాప్‌ల మధ్య షెడ్యూల్ బస్సులు" else "Search scheduled APSRTC services between stops", color = MaterialTheme.colorScheme.onSurfaceVariant)
