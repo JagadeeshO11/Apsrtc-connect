@@ -30,6 +30,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -272,7 +274,13 @@ fun APSRTCApp() {
             }
         }
         if (showRouteFilters && resultsPage && !serviceDetailPage) {
-            val availableTypes = routeResults.map { apsrtcServiceClass(it.route) }.distinct().sorted()
+            // Keep APSRTC service categories visible even when a particular route name is missing from this GTFS result.
+            val availableTypes = listOf(
+                "Garuda Plus", "Garuda", "Indra", "Amaravathi", "Vennela",
+                "Super Luxury", "Ultra Palle Velugu", "Palle Velugu",
+                "Ultra Deluxe", "Deluxe", "Metro Express", "Express",
+                "Semi Luxury", "City Ordinary", "AC Service", "Other"
+            )
             AlertDialog(
                 onDismissRequest = { showRouteFilters = false },
                 title = { Text(if (telugu) "బస్సు ఫిల్టర్లు" else "Filter services") },
@@ -561,7 +569,28 @@ private fun serviceRouteMapHtml(journey: JourneyOption): String {
 @Composable
 fun StopAutocomplete(label: String, value: String, stops: List<Stop>, onValue: (String) -> Unit, onSelect: (Stop) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    val matches = remember(value, stops) { if (value.trim().length < 2) emptyList() else stops.filter { it.name.contains(value.trim(), true) || it.id.contains(value.trim(), true) }.take(12) }
+    var matches by remember { mutableStateOf<List<Stop>>(emptyList()) }
+    // Build the searchable catalogue once. Filtering is debounced and runs off the UI thread,
+    // so typing stays responsive even with the full APSRTC stop catalogue.
+    val searchableStops = remember(stops) {
+        stops.map { stop -> stop to "${stop.name.lowercase(Locale.ROOT)} ${stop.id.lowercase(Locale.ROOT)}" }
+    }
+    LaunchedEffect(value, searchableStops) {
+        val query = value.trim().lowercase(Locale.ROOT)
+        if (query.length < 2) {
+            matches = emptyList()
+            return@LaunchedEffect
+        }
+        delay(120)
+        val found = withContext(Dispatchers.Default) {
+            searchableStops.asSequence()
+                .filter { (_, searchable) -> searchable.contains(query) }
+                .take(12)
+                .map { it.first }
+                .toList()
+        }
+        matches = found
+    }
     ExposedDropdownMenuBox(expanded = expanded && matches.isNotEmpty(), onExpandedChange = { expanded = it }) {
         OutlinedTextField(value, { typed -> onValue(typed); expanded = true }, Modifier.fillMaxWidth().menuAnchor(), label = { Text(label) }, singleLine = true,
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) })
