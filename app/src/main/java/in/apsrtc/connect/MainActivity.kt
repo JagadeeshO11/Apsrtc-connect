@@ -502,7 +502,8 @@ fun ServiceDetailScreen(modifier: Modifier, journey: JourneyOption) {
             Text("\${journey.departure} → \${journey.arrival} • \${journey.durationMinutes} min", style = MaterialTheme.typography.titleMedium)
             Text("Map shows only this selected trip segment, from the chosen origin to destination.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (stops.size >= 2 && stops.all { it.lat in -90.0..90.0 && it.lon in -180.0..180.0 && (it.lat != 0.0 || it.lon != 0.0) }) {
+        val mapStops = stops.filter { it.lat in -90.0..90.0 && it.lon in -180.0..180.0 && (it.lat != 0.0 || it.lon != 0.0) }
+        if (mapStops.size >= 2) {
             AndroidView(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 factory = { ctx -> WebView(ctx).apply {
@@ -531,7 +532,7 @@ fun ServiceDetailScreen(modifier: Modifier, journey: JourneyOption) {
             )
         } else {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text("This GTFS trip does not contain enough valid coordinates to draw a route map.")
+                Text("This GTFS trip has fewer than two stops with valid coordinates, so a route line cannot be drawn.")
             }
         }
         LazyColumn(Modifier.heightIn(max = 260.dp).fillMaxWidth().padding(horizontal = 16.dp)) {
@@ -550,9 +551,12 @@ fun ServiceDetailScreen(modifier: Modifier, journey: JourneyOption) {
 }
 
 private fun serviceRouteMapHtml(journey: JourneyOption): String {
-    val points = com.google.gson.Gson().toJson(journey.routeStops.mapIndexed { index, stop ->
+    // Some GTFS feeds contain placeholder (0,0) or invalid coordinates.
+    // Keep the full stop list in the UI, but draw the map from valid points only.
+    val validStops = journey.routeStops.filter { it.lat in -90.0..90.0 && it.lon in -180.0..180.0 && (it.lat != 0.0 || it.lon != 0.0) }
+    val points = com.google.gson.Gson().toJson(validStops.mapIndexed { index, stop ->
         mapOf("lat" to stop.lat, "lon" to stop.lon, "name" to stop.name, "id" to stop.id,
-            "kind" to if (index == 0) "From" else if (index == journey.routeStops.lastIndex) "To" else "Stop")
+            "kind" to if (index == 0) "From" else if (index == validStops.lastIndex) "To" else "Stop")
     })
     return """<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
