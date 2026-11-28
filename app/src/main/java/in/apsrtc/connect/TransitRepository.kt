@@ -17,6 +17,7 @@ data class BusRoute(val id: String, val shortName: String, val longName: String,
 data class JourneyOption(val route: BusRoute, val departure: String, val arrival: String, val durationMinutes: Int, val intermediateStops: List<String>, val departureMinutes: Int, val arrivalMinutes: Int, val routeStops: List<Stop> = emptyList())
 data class LiveBus(val id: String, val label: String, val routeId: String, val tripId: String, val lat: Double, val lon: Double, val bearing: Double, val timestamp: Long = 0L, val speed: Double = 0.0, val routeName: String = "", val routeLongName: String = "", val startTime: String = "")
 data class Arrival(val tripId: String, val routeId: String, val stopId: String, val arrivalEpoch: Long?, val delay: Int?)
+data class LiveFeedStatus(val feedTime: Long, val vehicles: Int, val onTrip: Int, val onRoute: Int, val tripUpdates: Int)
 
 class TransitRepository(private val context: Context) {
     private val client = OkHttpClient.Builder()
@@ -44,7 +45,7 @@ class TransitRepository(private val context: Context) {
         }
     }
 
-    private fun getCached(key: String, url: String, ttlMillis: Long = 60_000L): String {
+    private fun getCached(key: String, url: String, ttlMillis: Long = 20_000L): String {
         val cached = prefs.getString("${key}_body", null)
         val fetchedAt = prefs.getLong("${key}_at", 0L)
         val age = System.currentTimeMillis() - fetchedAt
@@ -300,7 +301,18 @@ class TransitRepository(private val context: Context) {
         orderedIds.sortedBy { it.first }.mapNotNull { stopById[it.second] }.distinctBy { it.id }
     }
 
-    suspend fun status(): String = withContext(Dispatchers.IO) { get("$base/apsrtc/rt/status.json") }
+    suspend fun status(): String = withContext(Dispatchers.IO) { getCached("feed_status", "$base/apsrtc/rt/status.json", 20_000L) }
+
+    suspend fun feedStatus(): LiveFeedStatus = withContext(Dispatchers.IO) {
+        val json = JsonParser.parseString(getCached("feed_status", "$base/apsrtc/rt/status.json", 20_000L)).asJsonObject
+        LiveFeedStatus(
+            feedTime = json.get("feed_time")?.asLong ?: 0L,
+            vehicles = json.get("vehicles")?.asInt ?: 0,
+            onTrip = json.get("on_trip")?.asInt ?: 0,
+            onRoute = json.get("on_route")?.asInt ?: 0,
+            tripUpdates = json.get("trip_updates")?.asInt ?: 0
+        )
+    }
 
     fun saveLiveBuses(items: List<LiveBus>) { prefs.edit().putString("last_live_buses", com.google.gson.Gson().toJson(items)).apply() }
     fun cachedLiveBuses(): List<LiveBus> = runCatching {
