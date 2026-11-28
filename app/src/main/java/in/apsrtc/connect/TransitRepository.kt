@@ -21,7 +21,7 @@ data class LiveFeedStatus(val feedTime: Long, val vehicles: Int, val onTrip: Int
 
 class TransitRepository(private val context: Context) {
     private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).callTimeout(150, TimeUnit.SECONDS).build()
+        .connectTimeout(5, TimeUnit.SECONDS).readTimeout(7, TimeUnit.SECONDS).callTimeout(9, TimeUnit.SECONDS).build()
     private val prefs = context.getSharedPreferences("apsrtc_connect", Context.MODE_PRIVATE)
     private val base = "https://maps.reclaim.city"
 
