@@ -243,7 +243,7 @@ fun APSRTCApp() {
             }
         ) { padding ->
             if (serviceDetailPage && selectedJourney != null) {
-                ServiceDetailScreen(Modifier.padding(padding), selectedJourney!!, buses)
+                ServiceDetailScreen(Modifier.padding(padding), selectedJourney!!, buses, lastUpdated)
             } else if (resultsPage) {
                 JourneyResultsScreen(Modifier.padding(padding), origin, destination, routeResults, selectedGtfsRouteType, selectedTimeWindow,
                     { selectedGtfsRouteType = it }, { selectedTimeWindow = it }, favorites,
@@ -508,9 +508,10 @@ fun JourneyResultsScreen(
 }
 
 @Composable
-fun ServiceDetailScreen(modifier: Modifier, journey: JourneyOption, liveBuses: List<LiveBus>) {
+fun ServiceDetailScreen(modifier: Modifier, journey: JourneyOption, liveBuses: List<LiveBus>, lastUpdated: Long) {
     val stops = journey.routeStops
-    val matchingLiveBus = liveBuses.firstOrNull { bus -> journey.tripId.isNotBlank() && bus.tripId == journey.tripId && bus.routeId == journey.route.id && bus.lat in -90.0..90.0 && bus.lon in -180.0..180.0 && (bus.lat != 0.0 || bus.lon != 0.0) }
+    val nowSeconds = System.currentTimeMillis() / 1000L
+    val matchingLiveBus = liveBuses.firstOrNull { bus -> journey.tripId.isNotBlank() && bus.tripId == journey.tripId && bus.routeId == journey.route.id && bus.timestamp > 0L && nowSeconds - bus.timestamp in 0L..180L && bus.lat in -90.0..90.0 && bus.lon in -180.0..180.0 && (bus.lat != 0.0 || bus.lon != 0.0) }
     Column(modifier.fillMaxSize()) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(journey.route.shortName.ifBlank { journey.route.id }, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
