@@ -6,7 +6,9 @@ Android-first APSRTC companion app built with Kotlin and Jetpack Compose.
 - Search APSRTC stops and find routes that serve both stops using GTFS stop_times.
 - Download and cache the APSRTC static GTFS feed.
 - Live vehicle positions, feed freshness status and trip updates from Reclaim City.
-- OpenStreetMap live vehicle map using Leaflet.
+- Native MapLibre live vehicle map using OpenFreeMap vector tiles and OpenStreetMap data.
+- Live bus markers, selected-trip tracking, trip stop markers and route lines.
+- APSRTC service-category filters remain selectable even when a category currently has zero live buses.
 - English/Telugu interface toggle.
 - Favourite route storage on device.
 - GitHub Actions debug APK build.
@@ -35,6 +37,6 @@ Open Actions → Build APSRTC Connect APK → Run workflow. The generated debug 
 
 ## Notes
 - Nearby stops request Android location permission and sort GTFS stops by distance from the device's last known location.
-- The map uses OpenStreetMap tiles and Leaflet via the WebView.
+- The map uses MapLibre Native (OpenGL ES) with the no-key OpenFreeMap Liberty style and OpenStreetMap data. Map tiles are supplied by a community-hosted service, so availability and usage policies apply; no Google Maps key or paid map subscription is used.
 - Arrival trip updates are parsed from the GTFS-Realtime JSON mapping and displayed with stop names, expected times and delay when supplied.
 - Feed attribution: reclaim.city and OpenStreetMap contributors. Check source licences before commercial distribution.
