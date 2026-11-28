@@ -720,7 +720,7 @@ private fun apsrtcServiceClass(route: BusRoute): String =
     apsrtcServiceClassName("${route.shortName} ${route.longName} ${route.id}")
 
 private fun apsrtcServiceClass(bus: LiveBus, routeById: Map<String, BusRoute>): String {
-    val route = routeById[bus.routeId]
+    val route = routeById[bus.routeId] ?: routeById[bus.routeId.lowercase(Locale.ROOT)] ?: routeById[bus.routeId.filter { it.isLetterOrDigit() }.lowercase(Locale.ROOT)]
     return apsrtcServiceClassName(listOf(bus.routeName, bus.routeLongName, bus.routeId, route?.shortName.orEmpty(), route?.longName.orEmpty()).joinToString(" "))
 }
 
