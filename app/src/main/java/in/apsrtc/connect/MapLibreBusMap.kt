@@ -114,6 +114,11 @@ fun MapLibreBusMap(
                 }
             }
             lifecycleOwner.lifecycle.addObserver(observer)
+            // MapView may be created after the Activity has entered STARTED/RESUMED.
+            // Synchronize its lifecycle immediately instead of waiting for another event.
+            val currentState = lifecycleOwner.lifecycle.currentState
+            if (currentState.isAtLeast(Lifecycle.State.STARTED)) view.onStart()
+            if (currentState.isAtLeast(Lifecycle.State.RESUMED)) view.onResume()
             onDispose {
                 lifecycleOwner.lifecycle.removeObserver(observer)
                 runCatching { view.onPause() }
