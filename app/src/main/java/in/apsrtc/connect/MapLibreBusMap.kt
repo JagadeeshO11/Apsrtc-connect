@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -47,6 +48,8 @@ fun MapLibreBusMap(
     var mapView by remember { mutableStateOf<MapView?>(null) }
     var map by remember { mutableStateOf<MapLibreMap?>(null) }
     var mapReady by remember { mutableStateOf(false) }
+    var mapError by remember { mutableStateOf(false) }
+    var retryCount by remember { mutableStateOf(0) }
     var initialCameraSet by remember { mutableStateOf(false) }
     var lastCameraSelection by remember { mutableStateOf<String?>(null) }
     val latestBuses by rememberUpdatedState(buses)
@@ -61,13 +64,14 @@ fun MapLibreBusMap(
                     onCreate(null)
                     mapView = this
                     getMapAsync { readyMap ->
+                        map = readyMap
                         readyMap.uiSettings.setAttributionEnabled(true)
                         readyMap.uiSettings.setLogoEnabled(true)
                         readyMap.setTileCacheEnabled(true)
                         readyMap.setPrefetchesTiles(true)
                         readyMap.setStyle(Style.Builder().fromUri(APSRTC_MAP_STYLE)) {
-                            map = readyMap
                             mapReady = true
+                            mapError = false
                         }
                     }
                 }
@@ -75,14 +79,28 @@ fun MapLibreBusMap(
             update = { }
         )
     
-        if (!mapReady) {
+        if (!mapReady && !mapError) {
             Surface(
                 modifier = Modifier.align(Alignment.TopCenter).padding(10.dp),
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
                 shape = MaterialTheme.shapes.medium,
                 shadowElevation = 3.dp
             ) {
-                Text("Loading OpenStreetMap…", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.labelMedium)
+                Text("Loading map tiles…", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.labelMedium)
+            }
+        }
+        if (mapError) {
+            Surface(modifier = Modifier.align(Alignment.Center).padding(16.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f), shape = MaterialTheme.shapes.large, shadowElevation = 6.dp) {
+                androidx.compose.foundation.layout.Column(modifier = Modifier.padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Map tiles are not responding", style = MaterialTheme.typography.titleMedium)
+                    Text("Check your internet connection and retry.", modifier = Modifier.padding(top = 4.dp, bottom = 10.dp), style = MaterialTheme.typography.bodySmall)
+                    androidx.compose.material3.Button(onClick = {
+                        mapError = false
+                        mapReady = false
+                        retryCount++
+                        map?.setStyle(Style.Builder().fromUri(APSRTC_MAP_STYLE)) { mapReady = true; mapError = false }
+                    }) { Text("Retry map") }
+                }
             }
         }
         Surface(
@@ -96,6 +114,13 @@ fun MapLibreBusMap(
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                 style = MaterialTheme.typography.labelSmall
             )
+        }
+    }
+
+    LaunchedEffect(mapReady, retryCount) {
+        if (!mapReady) {
+            delay(20_000)
+            if (!mapReady) mapError = true
         }
     }
 
@@ -127,6 +152,7 @@ fun MapLibreBusMap(
                 mapView = null
                 map = null
                 mapReady = false
+                mapError = false
                 initialCameraSet = false
             }
         }
