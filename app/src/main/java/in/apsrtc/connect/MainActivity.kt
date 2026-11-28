@@ -619,22 +619,39 @@ fun StopAutocomplete(label: String, value: String, stops: List<Stop>, onValue: (
     var matches by remember { mutableStateOf<List<Stop>>(emptyList()) }
     // Build the searchable catalogue once. Filtering is debounced and runs off the UI thread,
     // so typing stays responsive even with the full APSRTC stop catalogue.
+    // Pre-normalise once per catalogue update, not on every keystroke.
     val searchableStops = remember(stops) {
-        stops.map { stop -> stop to "${stop.name.lowercase(Locale.ROOT)} ${stop.id.lowercase(Locale.ROOT)}" }
+        stops.map { stop ->
+            val name = stop.name.lowercase(Locale.ROOT).trim()
+            val id = stop.id.lowercase(Locale.ROOT).trim()
+            Triple(stop, name, id)
+        }
     }
     LaunchedEffect(value, searchableStops) {
-        val query = value.trim().lowercase(Locale.ROOT)
+        val query = value.trim().lowercase(Locale.ROOT).replace(Regex("\\s+"), " ")
         if (query.length < 2) {
             matches = emptyList()
             return@LaunchedEffect
         }
-        delay(120)
+        // Short debounce plus prefix-first ranking makes suggestions feel immediate
+        // and puts exact stop-name/ID matches ahead of broad substring matches.
+        delay(60)
         val found = withContext(Dispatchers.Default) {
-            searchableStops.asSequence()
-                .filter { (_, searchable) -> searchable.contains(query) }
+            val tokens = query.split(' ').filter { it.isNotBlank() }
+            val prefix = searchableStops.asSequence()
+                .filter { (_, name, id) -> name.startsWith(query) || id.startsWith(query) || tokens.all { name.contains(it) } }
                 .take(12)
                 .map { it.first }
                 .toList()
+            if (prefix.size >= 12) prefix
+            else {
+                val used = prefix.mapTo(HashSet()) { it.id }
+                prefix + searchableStops.asSequence()
+                    .filter { (stop, name, id) -> stop.id !in used && (name.contains(query) || id.contains(query) || tokens.all { name.contains(it) }) }
+                    .take(12 - prefix.size)
+                    .map { it.first }
+                    .toList()
+            }
         }
         matches = found
     }
