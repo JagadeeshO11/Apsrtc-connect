@@ -539,7 +539,7 @@ fun ServiceDetailScreen(modifier: Modifier, journey: JourneyOption, liveBuses: L
                     loadDataWithBaseURL("https://www.openstreetmap.org", html, "text/html", "UTF-8", null)
                 } },
                 update = { view ->
-                    val html = serviceRouteMapHtml(journey)
+                    val html = serviceRouteMapHtml(journey, matchingLiveBus)
                     if (view.tag != html.hashCode()) {
                         view.tag = html.hashCode()
                         view.loadDataWithBaseURL("https://www.openstreetmap.org", html, "text/html", "UTF-8", null)
@@ -562,7 +562,7 @@ fun ServiceDetailScreen(modifier: Modifier, journey: JourneyOption, liveBuses: L
                 HorizontalDivider()
             }
         }
-        Text("Scheduled GTFS route preview • Not live bus GPS • © OpenStreetMap", Modifier.padding(12.dp), style = MaterialTheme.typography.labelSmall)
+        Text(if (matchingLiveBus != null) "Live GPS position • Refreshes with vehicle feed • © OpenStreetMap" else "Scheduled GTFS route preview • No matching live GPS vehicle • © OpenStreetMap", Modifier.padding(12.dp), style = MaterialTheme.typography.labelSmall)
     }
 }
 
@@ -589,6 +589,11 @@ private fun serviceRouteMapHtml(journey: JourneyOption, liveBus: LiveBus?): Stri
         const label=document.createElement('div');const name=document.createElement('div');name.textContent=(i+1)+'. '+p.name;name.style.fontWeight='600';
         const id=document.createElement('small');id.textContent='GTFS stop ID: '+p.id;id.style.color='#59645f';label.append(name,id);row.append(dot,label);list.appendChild(row);});
       root.appendChild(list);
+      if(live && Number.isFinite(live.lat) && Number.isFinite(live.lon)){
+        const liveRow=document.createElement('div'); liveRow.style.cssText='margin-top:16px;padding:12px;border-radius:10px;background:#e1f3ec;color:#075b42;font-weight:700';
+        liveRow.textContent='LIVE BUS: '+String(live.label)+' • '+(live.speed>0?(live.speed*3.6).toFixed(0)+' km/h':'speed unavailable');
+        root.appendChild(liveRow);
+      }
     } else {
       const map=L.map('map'); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
       const coords=pts.map(p=>[p.lat,p.lon]); L.polyline(coords,{color:'#176b87',weight:5,opacity:.85}).addTo(map);
