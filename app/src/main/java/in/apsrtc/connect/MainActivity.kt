@@ -756,7 +756,19 @@ fun MapScreen(
     var busType by remember { mutableStateOf("All services") }
     var sortBy by remember { mutableStateOf("Latest update") }
     var timeWindow by remember { mutableStateOf("All times") }
-    val routeById = remember(routes) { routes.associateBy { it.id } }
+    // GTFS route IDs can differ in case/format from IDs in the live feed; index common aliases too.
+    val routeById = remember(routes) {
+        buildMap {
+            routes.forEach { route ->
+                val aliases = listOf(route.id, route.shortName, route.id.filter { it.isLetterOrDigit() }, route.shortName.filter { it.isLetterOrDigit() })
+                aliases.filter { it.isNotBlank() }.forEach { alias ->
+                    put(alias, route)
+                    put(alias.lowercase(Locale.ROOT), route)
+                    put(alias.filter { it.isLetterOrDigit() }.lowercase(Locale.ROOT), route)
+                }
+            }
+        }
+    }
     val serviceTypes = listOf("Palle Velugu", "Ultra Palle Velugu", "Express", "Metro Express", "City Ordinary", "Super Luxury", "Ultra Deluxe", "Deluxe", "Garuda", "Garuda Plus", "Indra", "Amaravathi", "Vennela", "Semi Luxury", "AC Service", "Other")
     val busCounts = remember(buses, routes) { buses.groupingBy { apsrtcServiceClass(it, routeById) }.eachCount() }
     val filtered = buses.filter { bus ->
