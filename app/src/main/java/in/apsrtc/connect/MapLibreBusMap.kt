@@ -16,7 +16,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -31,7 +30,6 @@ import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
-import java.util.Locale
 
 private const val APSRTC_MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
 
@@ -45,12 +43,12 @@ fun MapLibreBusMap(
     selected: LiveBus?,
     onSelect: (LiveBus?) -> Unit
 ) {
-    val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var mapView by remember { mutableStateOf<MapView?>(null) }
     var map by remember { mutableStateOf<MapLibreMap?>(null) }
     var mapReady by remember { mutableStateOf(false) }
     var initialCameraSet by remember { mutableStateOf(false) }
+    var lastCameraSelection by remember { mutableStateOf<String?>(null) }
     val latestBuses by rememberUpdatedState(buses)
     val latestOnSelect by rememberUpdatedState(onSelect)
 
@@ -183,11 +181,16 @@ fun MapLibreBusMap(
 
         val selectedPoint = selected?.takeIf { isValidMapPoint(it.lat, it.lon) }
         if (selectedPoint != null) {
-            readyMap.animateCamera(
-                CameraUpdateFactory.newLatLngZoom(LatLng(selectedPoint.lat, selectedPoint.lon), 13.0),
-                350
-            )
-        } else if (!initialCameraSet) {
+            if (lastCameraSelection != selectedPoint.id) {
+                readyMap.animateCamera(
+                    CameraUpdateFactory.newLatLngZoom(LatLng(selectedPoint.lat, selectedPoint.lon), 13.0),
+                    350
+                )
+                lastCameraSelection = selectedPoint.id
+            }
+        } else {
+            lastCameraSelection = null
+            if (!initialCameraSet) {
             val cameraPoints = (validBuses.map { LatLng(it.lat, it.lon) } +
                 validStops.map { LatLng(it.lat, it.lon) } +
                 validEnds.map { LatLng(it.lat, it.lon) }).distinct()
@@ -210,10 +213,9 @@ fun MapLibreBusMap(
                         .build()
                 }
             }
+            }
         }
     }
-
-
 }
 
 private fun isValidMapPoint(latitude: Double, longitude: Double): Boolean =
