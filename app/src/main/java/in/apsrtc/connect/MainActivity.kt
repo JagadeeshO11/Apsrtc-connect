@@ -33,6 +33,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.ln
+import kotlin.math.tan
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -576,15 +578,32 @@ private fun serviceRouteMapHtml(journey: JourneyOption, liveBus: LiveBus?): Stri
     val validStops = journey.routeStops.filter { it.lat in -85.0..85.0 && it.lon in -180.0..180.0 && (it.lat != 0.0 || it.lon != 0.0) }
     val points = com.google.gson.Gson().toJson(validStops.mapIndexed { i, p -> mapOf("lat" to p.lat, "lon" to p.lon, "name" to p.name, "id" to p.id, "kind" to if(i==0) "From" else if(i==validStops.lastIndex) "To" else "Stop") })
     val liveJson = com.google.gson.Gson().toJson(liveBus?.let { mapOf("lat" to it.lat, "lon" to it.lon, "label" to it.label, "speed" to it.speed) })
+    // Static SVG is rendered by WebView even if JavaScript or a tile server is unavailable.
+    val overlayPoints = validStops.map { Triple(it.lon, it.lat, if (it == validStops.firstOrNull()) "#087f5b" else if (it == validStops.lastOrNull()) "#c2410c" else "#315c8a") } +
+        listOfNotNull(liveBus?.let { Triple(it.lon, it.lat, "#00a86b") })
+    val minLon = (overlayPoints.minOfOrNull { it.first } ?: 0.0) - 0.01
+    val maxLon = (overlayPoints.maxOfOrNull { it.first } ?: 1.0) + 0.01
+    val minLat = (overlayPoints.minOfOrNull { it.second } ?: 0.0) - 0.01
+    val maxLat = (overlayPoints.maxOfOrNull { it.second } ?: 1.0) + 0.01
+    fun sx(lon: Double) = 40.0 + ((lon - minLon) / (maxLon - minLon).coerceAtLeast(0.001)) * 920.0
+    fun sy(lat: Double): Double {
+        fun mercator(v: Double): Double { val r = Math.toRadians(v.coerceIn(-85.0, 85.0)); return ln(tan(Math.PI / 4.0 + r / 2.0)) }
+        val lo = mercator(minLat); val hi = mercator(maxLat)
+        return 40.0 + ((hi - mercator(lat)) / (hi - lo).coerceAtLeast(0.001)) * 520.0
+    }
+    val svgFallback = buildString {
+        if (validStops.size > 1) append("<polyline points=\"").append(validStops.joinToString(" ") { "${sx(it.lon)},${sy(it.lat)}" }).append("\" fill=\"none\" stroke=\"#087f9b\" stroke-width=\"7\" stroke-linecap=\"round\"/>")
+        overlayPoints.forEachIndexed { i, p -> append("<circle cx=\"").append(sx(p.first)).append("\" cy=\"").append(sy(p.second)).append("\" r=\"").append(if (liveBus != null && i == overlayPoints.lastIndex) 17 else 11).append("\" fill=\"").append(p.third).append("\" stroke=\"white\" stroke-width=\"5\"/>") }
+    }
     return """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><style>
-    html,body,#map{height:100%;width:100%;margin:0;overflow:hidden;background:#e7efec;font:14px sans-serif}#tiles,#layer{position:absolute;inset:0;width:100%;height:100%}.tile{position:absolute;width:256px;height:256px}.note{position:absolute;z-index:5;bottom:10px;left:10px;padding:8px 11px;background:white;border-radius:9px;box-shadow:0 1px 5px #777}</style></head><body><div id="map"><div id="tiles"></div><svg id="layer"></svg><div class="note" id="note">Preparing route map…</div></div><script>
+    html,body,#map{height:100%;width:100%;margin:0;overflow:hidden;background:#e7efec;font:14px sans-serif}#tiles,#layer{position:absolute;inset:0;width:100%;height:100%}.tile{position:absolute;width:256px;height:256px}.note{position:absolute;z-index:5;bottom:10px;left:10px;padding:8px 11px;background:white;border-radius:9px;box-shadow:0 1px 5px #777}</style></head><body><div id="map"><div id="tiles"></div><svg id="layer" viewBox="0 0 1000 600" preserveAspectRatio="none">$svgFallback</svg><div class="note" id="note">Preparing route map…</div></div><script>
     const pts=$points, live=$liveJson, root=document.getElementById('map'),tiles=document.getElementById('tiles'),svg=document.getElementById('layer');
     const all=pts.slice();if(live)all.push(live);
     function project(lat,lon,z){const n=2**z;return [(lon+180)/360*n*256,(1-Math.asinh(Math.tan(lat*Math.PI/180))/Math.PI)/2*n*256]}
     function draw(){const w=root.clientWidth,h=root.clientHeight;if(!w||!h)return;if(!all.length){document.getElementById('note').textContent='No valid stop coordinates in this trip';return;}
       const la=all.map(p=>p.lat),lo=all.map(p=>p.lon),span=Math.max(Math.max(...lo)-Math.min(...lo),(Math.max(...la)-Math.min(...la))*0.7,0.02),z=Math.max(6,Math.min(15,Math.floor(Math.log2(220/span))));
       const c=project((Math.min(...la)+Math.max(...la))/2,(Math.min(...lo)+Math.max(...lo))/2,z),left=c[0]-w/2,top=c[1]-h/2;
-      tiles.innerHTML='';for(let x=Math.floor(left/256)-1;x<=Math.ceil((left+w)/256)+1;x++)for(let y=Math.floor(top/256)-1;y<=Math.ceil((top+h)/256)+1;y++){if(y<0||y>=2**z)continue;const im=document.createElement('img');im.className='tile';im.src='https://tile.openstreetmap.org/'+z+'/'+x+'/'+y+'.png';im.style.left=(x*256-left)+'px';im.style.top=(y*256-top)+'px';im.onerror=()=>im.style.display='none';tiles.appendChild(im);}
+      tiles.innerHTML='';for(let x=Math.floor(left/256)-1;x<=Math.ceil((left+w)/256)+1;x++)for(let y=Math.floor(top/256)-1;y<=Math.ceil((top+h)/256)+1;y++){if(y<0||y>=2**z)continue;const im=document.createElement('img');im.className='tile';im.src='https://tile.openstreetmap.org/'+z+'/'+x+'/'+y+'.png';im.style.left=(x*256-left)+'px';im.style.top=(y*256-top)+'px';im.onerror=()=>{const next=Number(im.dataset.fallback||0)+1;im.dataset.fallback=String(next);if(next===1)im.src='https://tile.openstreetmap.de/'+z+'/'+x+'/'+y+'.png';else if(next===2)im.src='https://basemaps.cartocdn.com/light_all/'+z+'/'+x+'/'+y+'.png';else im.style.display='none';};tiles.appendChild(im);}
       svg.setAttribute('viewBox','0 0 '+w+' '+h);svg.innerHTML='';const xy=p=>{const q=project(p.lat,p.lon,z);return [q[0]-left,q[1]-top]};
       const ns='http://www.w3.org/2000/svg';if(pts.length>1){const pl=document.createElementNS(ns,'polyline');pl.setAttribute('points',pts.map(p=>xy(p).join(',')).join(' '));pl.setAttribute('fill','none');pl.setAttribute('stroke','#087f9b');pl.setAttribute('stroke-width','5');pl.setAttribute('stroke-linecap','round');svg.appendChild(pl);}
       pts.forEach((p,i)=>{const q=xy(p),c=document.createElementNS(ns,'circle');c.setAttribute('cx',q[0]);c.setAttribute('cy',q[1]);c.setAttribute('r',i===0||i===pts.length-1?9:6);c.setAttribute('fill',i===0?'#087f5b':i===pts.length-1?'#c2410c':'#315c8a');c.setAttribute('stroke','white');c.setAttribute('stroke-width','3');svg.appendChild(c);});
@@ -697,8 +716,16 @@ fun LiveScreen(modifier: Modifier, status: String, buses: List<LiveBus>, arrival
     }
 }
 
-private fun apsrtcServiceClass(route: BusRoute): String {
-    val name = "${route.shortName} ${route.longName} ${route.id}".lowercase(Locale.ROOT)
+private fun apsrtcServiceClass(route: BusRoute): String =
+    apsrtcServiceClassName("${route.shortName} ${route.longName} ${route.id}")
+
+private fun apsrtcServiceClass(bus: LiveBus, routeById: Map<String, BusRoute>): String {
+    val route = routeById[bus.routeId] ?: routeById[bus.routeId.lowercase(Locale.ROOT)] ?: routeById[bus.routeId.filter { it.isLetterOrDigit() }.lowercase(Locale.ROOT)]
+    return apsrtcServiceClassName(listOf(bus.routeName, bus.routeLongName, bus.routeId, route?.shortName.orEmpty(), route?.longName.orEmpty()).joinToString(" "))
+}
+
+private fun apsrtcServiceClassName(rawName: String): String {
+    val name = rawName.lowercase(Locale.ROOT).replace('_', ' ').replace('-', ' ')
     return when {
         Regex("\\bgaruda\\s*plus\\b").containsMatchIn(name) -> "Garuda Plus"
         Regex("\\bgaruda\\b").containsMatchIn(name) -> "Garuda"
@@ -728,11 +755,34 @@ fun MapScreen(
 ) {
     var busType by remember { mutableStateOf("All services") }
     var sortBy by remember { mutableStateOf("Latest update") }
-    val routeById = remember(routes) { routes.associateBy { it.id } }
-    val availableTypes = buses.mapNotNull { bus -> routeById[bus.routeId]?.let { apsrtcServiceClass(it) } }.distinct().sorted()
+    var timeWindow by remember { mutableStateOf("All times") }
+    // GTFS route IDs can differ in case/format from IDs in the live feed; index common aliases too.
+    val routeById = remember(routes) {
+        buildMap {
+            routes.forEach { route ->
+                val aliases = listOf(route.id, route.shortName, route.id.filter { it.isLetterOrDigit() }, route.shortName.filter { it.isLetterOrDigit() })
+                aliases.filter { it.isNotBlank() }.forEach { alias ->
+                    put(alias, route)
+                    put(alias.lowercase(Locale.ROOT), route)
+                    put(alias.filter { it.isLetterOrDigit() }.lowercase(Locale.ROOT), route)
+                }
+            }
+        }
+    }
+    val serviceTypes = listOf("Palle Velugu", "Ultra Palle Velugu", "Express", "Metro Express", "City Ordinary", "Super Luxury", "Ultra Deluxe", "Deluxe", "Garuda", "Garuda Plus", "Indra", "Amaravathi", "Vennela", "Semi Luxury", "AC Service", "Other")
+    val busCounts = remember(buses, routes) { buses.groupingBy { apsrtcServiceClass(it, routeById) }.eachCount() }
     val filtered = buses.filter { bus ->
-        val serviceClass = routeById[bus.routeId]?.let { apsrtcServiceClass(it) } ?: "Other"
-        busType == "All services" || serviceClass == busType
+        val serviceClass = apsrtcServiceClass(bus, routeById)
+        val typeMatch = busType == "All services" || serviceClass == busType
+        val hour = bus.startTime.substringBefore(":").toIntOrNull()
+        val timeMatch = when (timeWindow) {
+            "00:00–06:00" -> hour in 0..5
+            "06:00–12:00" -> hour in 6..11
+            "12:00–18:00" -> hour in 12..17
+            "18:00–24:00" -> hour in 18..23
+            else -> true
+        }
+        typeMatch && timeMatch
     }.let { list ->
         when (sortBy) {
             "Fastest" -> list.sortedByDescending { it.speed }
@@ -747,10 +797,15 @@ fun MapScreen(
         Text(if (lastUpdated > 0L) "GPS last updated ${SimpleDateFormat("dd MMM, hh:mm:ss a", Locale.getDefault()).format(Date(lastUpdated * 1000))}" else "Waiting for first GPS timestamp", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             FilterChip(selected = busType == "All services", onClick = { busType = "All services" }, label = { Text("All services • ${buses.size}") }, modifier = Modifier.padding(end = 6.dp))
-            availableTypes.forEach { type ->
-                val busCount = buses.count { bus -> routeById[bus.routeId]?.let { apsrtcServiceClass(it) } == type }
-                val routeCount = routes.count { apsrtcServiceClass(it) == type }
-                FilterChip(selected = busType == type, onClick = { busType = type }, label = { Text("$type • $busCount buses / $routeCount routes") }, modifier = Modifier.padding(end = 6.dp))
+            serviceTypes.filter { (busCounts[it] ?: 0) > 0 || busType == it }.forEach { type ->
+                FilterChip(selected = busType == type, onClick = { busType = type }, label = { Text("$type • ${busCounts[type] ?: 0}") }, modifier = Modifier.padding(end = 6.dp))
+            }
+        }
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Departure:", style = MaterialTheme.typography.labelMedium)
+            Spacer(Modifier.width(6.dp))
+            listOf("All times", "00:00–06:00", "06:00–12:00", "12:00–18:00", "18:00–24:00").forEach { window ->
+                FilterChip(selected = timeWindow == window, onClick = { timeWindow = window }, label = { Text(window) }, modifier = Modifier.padding(end = 6.dp))
             }
         }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -850,12 +905,20 @@ private fun mapHtml(buses: List<LiveBus>, origin: Stop?, destination: Stop?, sel
     val markers=gson.toJson(buses.filter{it.lat in -85.0..85.0&&it.lon in -180.0..180.0&&(it.lat!=0.0||it.lon!=0.0)}.mapIndexed{i,b->mapOf("lat" to b.lat,"lon" to b.lon,"label" to b.label,"route" to b.routeId,"tripId" to b.tripId,"speed" to b.speed,"time" to b.timestamp,"index" to i)})
     val stops=gson.toJson(tripStops.filter{it.lat in -85.0..85.0&&it.lon in -180.0..180.0&&(it.lat!=0.0||it.lon!=0.0)}.map{mapOf("lat" to it.lat,"lon" to it.lon,"name" to it.name,"id" to it.id)})
     val ends=gson.toJson(listOfNotNull(origin,destination).filter{it.lat in -85.0..85.0&&it.lon in -180.0..180.0&&(it.lat!=0.0||it.lon!=0.0)}.map{mapOf("lat" to it.lat,"lon" to it.lon,"name" to it.name)})
-    return """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><style>html,body,#map{height:100%;width:100%;margin:0;overflow:hidden;background:#e7efec;font:14px sans-serif}#tiles,#layer{position:absolute;inset:0;width:100%;height:100%}.tile{position:absolute;width:256px;height:256px}.note{position:absolute;z-index:5;bottom:10px;left:10px;padding:8px 11px;background:white;border-radius:9px;box-shadow:0 1px 5px #777}</style></head><body><div id="map"><div id="tiles"></div><svg id="layer"></svg><div class="note" id="note">Loading live bus positions…</div></div><script>
+    val staticItems = buses.filter{it.lat in -85.0..85.0&&it.lon in -180.0..180.0&&(it.lat!=0.0||it.lon!=0.0)}.map{Triple(it.lon,it.lat,"#087f5b")} +
+        tripStops.filter{it.lat in -85.0..85.0&&it.lon in -180.0..180.0&&(it.lat!=0.0||it.lon!=0.0)}.map{Triple(it.lon,it.lat,"#e09f3e")} +
+        listOfNotNull(origin,destination).filter{it.lat in -85.0..85.0&&it.lon in -180.0..180.0&&(it.lat!=0.0||it.lon!=0.0)}.map{Triple(it.lon,it.lat,"#315c8a")}
+    val minLon=(staticItems.minOfOrNull{it.first}?:0.0)-0.02; val maxLon=(staticItems.maxOfOrNull{it.first}?:1.0)+0.02
+    val minLat=(staticItems.minOfOrNull{it.second}?:0.0)-0.02; val maxLat=(staticItems.maxOfOrNull{it.second}?:1.0)+0.02
+    fun sx(lon:Double)=40.0+((lon-minLon)/(maxLon-minLon).coerceAtLeast(0.001))*920.0
+    fun sy(lat:Double):Double { fun merc(v:Double):Double { val r=Math.toRadians(v.coerceIn(-85.0,85.0)); return ln(tan(Math.PI/4.0+r/2.0)) }; val lo=merc(minLat);val hi=merc(maxLat);return 40.0+((hi-merc(lat))/(hi-lo).coerceAtLeast(0.001))*520.0 }
+    val svgFallback=buildString { staticItems.forEachIndexed{i,p->append("<circle cx=\"").append(sx(p.first)).append("\" cy=\"").append(sy(p.second)).append("\" r=\"").append(if(i<buses.size) 13 else 9).append("\" fill=\"").append(p.third).append("\" stroke=\"white\" stroke-width=\"4\"/>")} }
+    return """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><style>html,body,#map{height:100%;width:100%;margin:0;overflow:hidden;background:#e7efec;font:14px sans-serif}#tiles,#layer{position:absolute;inset:0;width:100%;height:100%}.tile{position:absolute;width:256px;height:256px}.note{position:absolute;z-index:5;bottom:10px;left:10px;padding:8px 11px;background:white;border-radius:9px;box-shadow:0 1px 5px #777}</style></head><body><div id="map"><div id="tiles"></div><svg id="layer" viewBox="0 0 1000 600" preserveAspectRatio="none">$svgFallback</svg><div class="note" id="note">Loading live bus positions…</div></div><script>
     const buses=$markers,stops=$stops,ends=$ends,all=[...buses,...stops,...ends],root=document.getElementById('map'),tiles=document.getElementById('tiles'),svg=document.getElementById('layer');
     function project(lat,lon,z){const n=2**z;return [(lon+180)/360*n*256,(1-Math.asinh(Math.tan(lat*Math.PI/180))/Math.PI)/2*n*256]}
     function draw(){const w=root.clientWidth,h=root.clientHeight;if(!w||!h)return;if(!all.length){document.getElementById('note').textContent='No live GPS positions received. Pull to refresh.';return;}
       const la=all.map(p=>p.lat),lo=all.map(p=>p.lon),span=Math.max(Math.max(...lo)-Math.min(...lo),(Math.max(...la)-Math.min(...la))*0.7,0.2),z=Math.max(5,Math.min(13,Math.floor(Math.log2(220/span)))),c=project((Math.min(...la)+Math.max(...la))/2,(Math.min(...lo)+Math.max(...lo))/2,z),left=c[0]-w/2,top=c[1]-h/2;
-      tiles.innerHTML='';for(let x=Math.floor(left/256)-1;x<=Math.ceil((left+w)/256)+1;x++)for(let y=Math.floor(top/256)-1;y<=Math.ceil((top+h)/256)+1;y++){if(y<0||y>=2**z)continue;const im=document.createElement('img');im.className='tile';im.src='https://tile.openstreetmap.org/'+z+'/'+x+'/'+y+'.png';im.style.left=(x*256-left)+'px';im.style.top=(y*256-top)+'px';im.onerror=()=>im.style.display='none';tiles.appendChild(im);}
+      tiles.innerHTML='';for(let x=Math.floor(left/256)-1;x<=Math.ceil((left+w)/256)+1;x++)for(let y=Math.floor(top/256)-1;y<=Math.ceil((top+h)/256)+1;y++){if(y<0||y>=2**z)continue;const im=document.createElement('img');im.className='tile';im.src='https://tile.openstreetmap.org/'+z+'/'+x+'/'+y+'.png';im.style.left=(x*256-left)+'px';im.style.top=(y*256-top)+'px';im.onerror=()=>{const next=Number(im.dataset.fallback||0)+1;im.dataset.fallback=String(next);if(next===1)im.src='https://tile.openstreetmap.de/'+z+'/'+x+'/'+y+'.png';else if(next===2)im.src='https://basemaps.cartocdn.com/light_all/'+z+'/'+x+'/'+y+'.png';else im.style.display='none';};tiles.appendChild(im);}
       svg.setAttribute('viewBox','0 0 '+w+' '+h);svg.innerHTML='';const ns='http://www.w3.org/2000/svg',xy=p=>{const q=project(p.lat,p.lon,z);return [q[0]-left,q[1]-top]};
       stops.forEach(p=>{const q=xy(p),c=document.createElementNS(ns,'circle');c.setAttribute('cx',q[0]);c.setAttribute('cy',q[1]);c.setAttribute('r',5);c.setAttribute('fill','#e09f3e');c.setAttribute('stroke','white');c.setAttribute('stroke-width','2');svg.appendChild(c);});
       ends.forEach(p=>{const q=xy(p),c=document.createElementNS(ns,'circle');c.setAttribute('cx',q[0]);c.setAttribute('cy',q[1]);c.setAttribute('r',9);c.setAttribute('fill','#315c8a');c.setAttribute('stroke','white');c.setAttribute('stroke-width','3');svg.appendChild(c);});
