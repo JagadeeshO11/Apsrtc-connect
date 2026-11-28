@@ -774,14 +774,14 @@ fun MapScreen(
     var sortBy by remember { mutableStateOf("Latest update") }
     var timeWindow by remember { mutableStateOf("All times") }
     var mapExpanded by remember { mutableStateOf(false) }
+    var showFilters by remember { mutableStateOf(false) }
+    var showBusList by remember { mutableStateOf(false) }
     val routeById = remember(routes) {
         buildMap {
             routes.forEach { route ->
-                val aliases = listOf(
-                    route.id, route.shortName, route.longName,
+                val aliases = listOf(route.id, route.shortName, route.longName,
                     route.id.filter { it.isLetterOrDigit() },
-                    route.shortName.filter { it.isLetterOrDigit() }
-                )
+                    route.shortName.filter { it.isLetterOrDigit() })
                 aliases.filter { it.isNotBlank() }.forEach { alias ->
                     val normalized = alias.trim().lowercase(Locale.ROOT)
                     put(alias, route)
@@ -825,183 +825,122 @@ fun MapScreen(
     if (mapExpanded) {
         Box(modifier.fillMaxSize()) {
             MapLibreBusMap(
-                modifier = Modifier.fillMaxSize(),
-                buses = visibleBuses,
+                modifier = Modifier.fillMaxSize(), buses = visibleBuses,
                 tripStops = if (selectedInFilter != null) selectedTripStops else emptyList(),
-                origin = origin,
-                destination = destination,
-                selected = selectedInFilter,
+                origin = origin, destination = destination, selected = selectedInFilter,
                 onSelect = onSelect
             )
-            FilledTonalButton(
-                onClick = { mapExpanded = false },
-                modifier = Modifier.align(Alignment.TopEnd).padding(12.dp)
-            ) {
+            FilledTonalButton(onClick = { mapExpanded = false },
+                modifier = Modifier.align(Alignment.TopEnd).padding(12.dp)) {
                 Icon(Icons.Default.FullscreenExit, contentDescription = null)
-                Spacer(Modifier.width(6.dp))
-                Text("Exit full screen")
+                Spacer(Modifier.width(6.dp)); Text("Exit full screen")
             }
         }
     } else Column(modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 14.dp, end = 8.dp, top = 5.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Live APSRTC map", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    if (selectedInFilter != null) "Tracking ${selectedInFilter.label}"
+                    else "${visibleBuses.size} buses visible • GPS map",
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+            TextButton(onClick = { showFilters = !showFilters }) {
+                Icon(Icons.Default.FilterList, contentDescription = null)
+                Text(if (showFilters) "Hide filters" else "Filters")
+            }
+            IconButton(onClick = { mapExpanded = true }) {
+                Icon(Icons.Default.Fullscreen, contentDescription = "Expand map")
+            }
+        }
         Text(
-            "Live APSRTC buses • native interactive map",
-            Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp),
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold
-        )
-        Text(
-            if (selectedInFilter != null) "Selected trip only • ${selectedInFilter.tripId.ifBlank { "Trip ID unavailable" }}"
-            else "All available live vehicle positions • tap a bus marker to track one trip",
-            Modifier.padding(horizontal = 16.dp),
-            style = MaterialTheme.typography.bodySmall
-        )
-        Text(
-            if (lastUpdated > 0L) "GPS last updated ${SimpleDateFormat("dd MMM, hh:mm:ss a", Locale.getDefault()).format(Date(lastUpdated * 1000))}"
-            else "Waiting for first GPS timestamp",
-            Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            if (lastUpdated > 0L) "GPS updated ${SimpleDateFormat("dd MMM, hh:mm:ss a", Locale.getDefault()).format(Date(lastUpdated * 1000))}"
+            else "Waiting for GPS feed • map will show when bus coordinates arrive",
+            Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.primary
         )
-        Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            FilterChip(
-                selected = busType == "All services",
-                onClick = { busType = "All services"; onSelect(null) },
-                label = { Text("All services • ${buses.size}") },
-                modifier = Modifier.padding(end = 6.dp)
+        if (showFilters) {
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FilterChip(selected = busType == "All services",
+                    onClick = { busType = "All services"; onSelect(null) },
+                    label = { Text("All • ${buses.size}") }, modifier = Modifier.padding(end = 5.dp))
+                serviceTypes.forEach { type ->
+                    FilterChip(selected = busType == type,
+                        onClick = { busType = type; onSelect(null) },
+                        label = { Text("$type • ${busCounts[type] ?: 0}") },
+                        modifier = Modifier.padding(end = 5.dp))
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Departure", style = MaterialTheme.typography.labelSmall)
+                Spacer(Modifier.width(5.dp))
+                listOf("All times", "00:00–06:00", "06:00–12:00", "12:00–18:00", "18:00–24:00").forEach { window ->
+                    FilterChip(selected = timeWindow == window,
+                        onClick = { timeWindow = window; onSelect(null) },
+                        label = { Text(window) }, modifier = Modifier.padding(end = 4.dp))
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Sort", style = MaterialTheme.typography.labelSmall)
+                Spacer(Modifier.width(6.dp))
+                listOf("Latest update", "Fastest", "Route").forEach { option ->
+                    FilterChip(selected = sortBy == option, onClick = { sortBy = option },
+                        label = { Text(option) }, modifier = Modifier.padding(end = 5.dp))
+                }
+            }
+        }
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            MapLibreBusMap(
+                modifier = Modifier.fillMaxSize(), buses = visibleBuses,
+                tripStops = if (selectedInFilter != null) selectedTripStops else emptyList(),
+                origin = origin, destination = destination, selected = selectedInFilter,
+                onSelect = onSelect
             )
-            // Keep every APSRTC category selectable, including categories with zero current GPS buses.
-            serviceTypes.forEach { type ->
-                FilterChip(
-                    selected = busType == type,
-                    onClick = { busType = type; onSelect(null) },
-                    label = { Text("$type • ${busCounts[type] ?: 0}") },
-                    modifier = Modifier.padding(end = 6.dp)
-                )
+            FilledTonalButton(onClick = { showBusList = !showBusList },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(10.dp)) {
+                Icon(Icons.Default.DirectionsBus, contentDescription = null)
+                Text(if (showBusList) "Hide buses" else "Bus list (${visibleBuses.size})")
             }
         }
-        Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Departure:", style = MaterialTheme.typography.labelMedium)
-            Spacer(Modifier.width(6.dp))
-            listOf("All times", "00:00–06:00", "06:00–12:00", "12:00–18:00", "18:00–24:00").forEach { window ->
-                FilterChip(
-                    selected = timeWindow == window,
-                    onClick = { timeWindow = window; onSelect(null) },
-                    label = { Text(window) },
-                    modifier = Modifier.padding(end = 6.dp)
-                )
-            }
-        }
-        Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Sort:", style = MaterialTheme.typography.labelMedium)
-            Spacer(Modifier.width(8.dp))
-            listOf("Latest update", "Fastest", "Route").forEach { option ->
-                FilterChip(
-                    selected = sortBy == option,
-                    onClick = { sortBy = option },
-                    label = { Text(option) },
-                    modifier = Modifier.padding(end = 6.dp)
-                )
-            }
-            TextButton(onClick = { mapExpanded = true }) {
-                Icon(Icons.Default.Fullscreen, contentDescription = null)
-                Text("Expand map")
-            }
-        }
-
-        MapLibreBusMap(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            buses = visibleBuses,
-            tripStops = if (selectedInFilter != null) selectedTripStops else emptyList(),
-            origin = origin,
-            destination = destination,
-            selected = selectedInFilter,
-            onSelect = onSelect
-        )
-
-        if (selectedInFilter != null) {
-            val route = routeById[selectedInFilter.routeId]
-            Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+        if (showBusList) {
+            if (selectedInFilter != null) {
                 ListItem(
                     headlineContent = { Text(selectedInFilter.label) },
-                    supportingContent = {
-                        Text(
-                            "Route: ${route?.shortName ?: selectedInFilter.routeId.ifBlank { "Unavailable" }} • Trip ID: ${selectedInFilter.tripId.ifBlank { "Unavailable" }} • ${selectedTripStops.size} GTFS stops"
-                        )
-                    },
-                    trailingContent = {
-                        IconButton(onClick = { onSelect(null) }) {
-                            Icon(Icons.Default.Close, "Show all buses")
-                        }
-                    }
+                    supportingContent = { Text("Route: ${routeById[selectedInFilter.routeId]?.shortName ?: selectedInFilter.routeId.ifBlank { "Unavailable" }} • Trip: ${selectedInFilter.tripId.ifBlank { "Unavailable" }} • ${selectedTripStops.size} stops") },
+                    trailingContent = { IconButton(onClick = { onSelect(null) }) { Icon(Icons.Default.Close, "Show all buses") } }
                 )
-            }
-            if (selectedTripStops.isEmpty()) {
-                Text(
-                    "No matching GTFS stop sequence was found for this live trip ID.",
-                    Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.bodySmall
-                )
-            } else {
-                Text(
-                    "Stops on selected trip",
-                    Modifier.padding(start = 16.dp, top = 4.dp),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                LazyColumn(Modifier.heightIn(max = 145.dp).fillMaxWidth()) {
-                    items(selectedTripStops) { stop ->
+            } else if (visibleBuses.isNotEmpty()) {
+                LazyColumn(Modifier.heightIn(max = 125.dp).fillMaxWidth()) {
+                    items(visibleBuses.take(60)) { bus ->
+                        val route = routeById[bus.routeId]
                         ListItem(
-                            headlineContent = { Text(stop.name) },
-                            supportingContent = { Text("stop_id: ${stop.id}") },
-                            leadingContent = { Icon(Icons.Default.Place, null) }
+                            modifier = Modifier.clickable { onSelect(bus) },
+                            headlineContent = { Text(bus.label) },
+                            supportingContent = { Text("${route?.shortName ?: bus.routeId.ifBlank { "Route not matched" }} • Trip: ${bus.tripId.ifBlank { "unknown" }}") },
+                            trailingContent = { Icon(Icons.Default.ChevronRight, null) }
                         )
-                        HorizontalDivider()
                     }
                 }
+            } else {
+                Text("No buses match these filters. Open Filters and choose All services.", Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
             }
-        } else if (visibleBuses.isNotEmpty()) {
-            Text(
-                "Tap a bus marker or row to show only that bus and its trip stops",
-                Modifier.padding(start = 16.dp, top = 6.dp),
-                style = MaterialTheme.typography.labelMedium
-            )
-            LazyColumn(Modifier.heightIn(max = 180.dp).fillMaxWidth()) {
-                items(visibleBuses.take(80)) { bus ->
-                    val route = routeById[bus.routeId]
-                    ListItem(
-                        modifier = Modifier.clickable { onSelect(bus) },
-                        headlineContent = { Text(bus.label) },
-                        supportingContent = {
-                            Text(
-                                "${route?.shortName ?: bus.routeId.ifBlank { "Route not matched" }} • Trip: ${bus.tripId.ifBlank { "unknown" }} • ${if (bus.speed > 0) "${"%.0f".format(bus.speed * 3.6)} km/h" else "Speed unavailable"}"
-                            )
-                        },
-                        trailingContent = { Icon(Icons.Default.ChevronRight, null) }
-                    )
-                    HorizontalDivider()
-                }
-            }
-        } else {
-            Text(
-                "No live vehicle positions in this filter. Choose All services or another category.",
-                Modifier.padding(16.dp),
-                style = MaterialTheme.typography.bodySmall
-            )
         }
-        Text(
-            "${visibleBuses.size} shown / ${buses.size} live positions • Auto-refresh every 30 seconds",
-            Modifier.padding(12.dp),
-            style = MaterialTheme.typography.labelSmall
-        )
+        Text("${visibleBuses.size} shown / ${buses.size} live positions • Auto-refresh every 30 seconds",
+            Modifier.padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
     }
 }
 
