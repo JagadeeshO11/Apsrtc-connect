@@ -54,27 +54,52 @@ fun MapLibreBusMap(
     val latestBuses by rememberUpdatedState(buses)
     val latestOnSelect by rememberUpdatedState(onSelect)
 
-    AndroidView(
-        modifier = modifier.fillMaxSize(),
-        factory = { ctx ->
-            MapLibre.getInstance(ctx.applicationContext)
-            MapView(ctx).apply {
-                onCreate(null)
-                mapView = this
-                getMapAsync { readyMap ->
-                    readyMap.uiSettings.isAttributionEnabled = true
-                    readyMap.uiSettings.isLogoEnabled = true
-                    readyMap.setTileCacheEnabled(true)
-                    readyMap.setPrefetchesTiles(true)
-                    readyMap.setStyle(Style.Builder().fromUri(APSRTC_MAP_STYLE)) {
-                        map = readyMap
-                        mapReady = true
+    Box(modifier = modifier.fillMaxSize()) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                MapLibre.getInstance(ctx.applicationContext)
+                MapView(ctx).apply {
+                    onCreate(null)
+                    mapView = this
+                    getMapAsync { readyMap ->
+                        readyMap.uiSettings.isAttributionEnabled = true
+                        readyMap.uiSettings.isLogoEnabled = true
+                        readyMap.setTileCacheEnabled(true)
+                        readyMap.setPrefetchesTiles(true)
+                        readyMap.setStyle(Style.Builder().fromUri(APSRTC_MAP_STYLE)) {
+                            map = readyMap
+                            mapReady = true
+                        }
                     }
                 }
+            },
+            update = { }
+        )
+    
+        if (!mapReady) {
+            Surface(
+                modifier = Modifier.align(Alignment.TopCenter).padding(10.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+                shape = MaterialTheme.shapes.medium,
+                shadowElevation = 3.dp
+            ) {
+                Text("Loading OpenStreetMap…", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.labelMedium)
             }
-        },
-        update = { }
-    )
+        }
+        Surface(
+            modifier = Modifier.align(Alignment.BottomStart).padding(8.dp),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.90f),
+            shape = MaterialTheme.shapes.small,
+            shadowElevation = 2.dp
+        ) {
+            Text(
+                "© OpenStreetMap contributors • OpenFreeMap",
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                style = MaterialTheme.typography.labelSmall
+            )
+        }
+    }
 
     DisposableEffect(lifecycleOwner, mapView) {
         val view = mapView
@@ -188,30 +213,7 @@ fun MapLibreBusMap(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        if (!mapReady) {
-            Surface(
-                modifier = Modifier.align(Alignment.TopCenter).padding(10.dp),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-                shape = MaterialTheme.shapes.medium,
-                shadowElevation = 3.dp
-            ) {
-                Text("Loading OpenStreetMap…", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.labelMedium)
-            }
-        }
-        Surface(
-            modifier = Modifier.align(Alignment.BottomStart).padding(8.dp),
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.90f),
-            shape = MaterialTheme.shapes.small,
-            shadowElevation = 2.dp
-        ) {
-            Text(
-                "© OpenStreetMap contributors • OpenFreeMap",
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                style = MaterialTheme.typography.labelSmall
-            )
-        }
-    }
+
 }
 
 private fun isValidMapPoint(latitude: Double, longitude: Double): Boolean =
