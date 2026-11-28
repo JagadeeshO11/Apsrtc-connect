@@ -61,8 +61,8 @@ fun MapLibreBusMap(
                     onCreate(null)
                     mapView = this
                     getMapAsync { readyMap ->
-                        readyMap.uiSettings.isAttributionEnabled = true
-                        readyMap.uiSettings.isLogoEnabled = true
+                        readyMap.uiSettings.setAttributionEnabled(true)
+                        readyMap.uiSettings.setLogoEnabled(true)
                         readyMap.setTileCacheEnabled(true)
                         readyMap.setPrefetchesTiles(true)
                         readyMap.setStyle(Style.Builder().fromUri(APSRTC_MAP_STYLE)) {
