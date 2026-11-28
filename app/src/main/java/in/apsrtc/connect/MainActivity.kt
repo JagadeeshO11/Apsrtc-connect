@@ -132,20 +132,35 @@ fun APSRTCApp() {
             try {
             val failures = mutableListOf<String>()
             var positionsOk = false
+            var sourceStatus: LiveFeedStatus? = null
+            runCatching { repo.feedStatus() }
+                .onSuccess { sourceStatus = it }
+                .onFailure { failures += "Feed status: ${it.message ?: "unavailable"}" }
             runCatching { repo.liveBuses(routes) }
                 .onSuccess { fresh ->
                     buses = fresh; repo.saveLiveBuses(fresh); positionsOk = true
-                    val newest = fresh.maxOfOrNull { it.timestamp } ?: 0L
-                    if (newest > 0L) { lastUpdated = newest; context.getSharedPreferences("apsrtc_connect", android.content.Context.MODE_PRIVATE).edit().putLong("last_live_success", newest).apply() }
+                    val newest = fresh.maxOfOrNull { it.timestamp } ?: sourceStatus?.feedTime ?: 0L
+                    if (newest > 0L) {
+                        lastUpdated = newest
+                        context.getSharedPreferences("apsrtc_connect", android.content.Context.MODE_PRIVATE)
+                            .edit().putLong("last_live_success", newest).apply()
+                    }
                 }
                 .onFailure { failures += "Vehicle feed: ${it.message ?: "network error"}"; if (buses.isEmpty()) buses = repo.cachedLiveBuses() }
             runCatching { repo.arrivals() }
                 .onSuccess { fresh -> arrivals = fresh; repo.saveArrivals(fresh) }
                 .onFailure { failures += "Arrival feed: ${it.message ?: "network error"}"; if (arrivals.isEmpty()) arrivals = repo.cachedArrivals() }
-            status = if (lastUpdated > 0L) {
-                "Vehicle feed timestamp ${SimpleDateFormat("hh:mm:ss a", Locale.getDefault()).format(Date(lastUpdated * 1000))} • ${buses.size} vehicles"
-            } else if (positionsOk) "Vehicle positions loaded" else "Showing saved data"
-            if (status.startsWith("Connecting")) status = if (positionsOk) "Live vehicle positions loaded" else "Showing saved data"
+            val feedAge = sourceStatus?.feedTime?.let { (System.currentTimeMillis() / 1000L - it).coerceAtLeast(0L) }
+            if (feedAge != null && feedAge > 180L) failures += "GPS source is stale (${feedAge / 60} min old)"
+            status = when {
+                sourceStatus != null -> {
+                    val freshness = if (feedAge == null) "age unknown" else if (feedAge <= 90L) "fresh" else "stale"
+                    "Source: ${sourceStatus!!.vehicles} buses • ${sourceStatus!!.onTrip} matched trips • GPS ${freshness} • app parsed ${buses.size}"
+                }
+                lastUpdated > 0L -> "Last GPS timestamp ${SimpleDateFormat("hh:mm:ss a", Locale.getDefault()).format(Date(lastUpdated * 1000))} • ${buses.size} parsed vehicles"
+                positionsOk -> "Vehicle positions loaded"
+                else -> "Showing saved data"
+            }
             error = failures.joinToString("  •  ")
             } finally {
                 refreshing = false
@@ -186,7 +201,7 @@ fun APSRTCApp() {
         if (appVisible) {
             refreshLive()
             while (true) {
-                delay(65_000)
+                delay(30_000)
                 if (appVisible) refreshLive()
             }
         }
@@ -817,7 +832,7 @@ fun MapScreen(
         } else {
             Text("No live vehicle positions in this filter. Try All or clear the selected bus.", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
         }
-        Text("${visibleBuses.size} shown / ${buses.size} live positions • Auto-refresh every 65 seconds • © OpenStreetMap", Modifier.padding(12.dp), style = MaterialTheme.typography.labelSmall)
+        Text("${visibleBuses.size} shown / ${buses.size} live positions • Auto-refresh every 30 seconds • © OpenStreetMap", Modifier.padding(12.dp), style = MaterialTheme.typography.labelSmall)
     }
 }
 
