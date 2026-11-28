@@ -773,6 +773,7 @@ fun MapScreen(
     var busType by remember { mutableStateOf("All services") }
     var sortBy by remember { mutableStateOf("Latest update") }
     var timeWindow by remember { mutableStateOf("All times") }
+    var mapExpanded by remember { mutableStateOf(false) }
     val routeById = remember(routes) {
         buildMap {
             routes.forEach { route ->
@@ -821,7 +822,27 @@ fun MapScreen(
     val selectedInFilter = selected?.let { chosen -> filtered.firstOrNull { it.id == chosen.id } }
     val visibleBuses = if (selectedInFilter != null) listOf(selectedInFilter) else filtered
 
-    Column(modifier.fillMaxSize()) {
+    if (mapExpanded) {
+        Box(modifier.fillMaxSize()) {
+            MapLibreBusMap(
+                modifier = Modifier.fillMaxSize(),
+                buses = visibleBuses,
+                tripStops = if (selectedInFilter != null) selectedTripStops else emptyList(),
+                origin = origin,
+                destination = destination,
+                selected = selectedInFilter,
+                onSelect = onSelect
+            )
+            FilledTonalButton(
+                onClick = { mapExpanded = false },
+                modifier = Modifier.align(Alignment.TopEnd).padding(12.dp)
+            ) {
+                Icon(Icons.Default.FullscreenExit, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("Exit full screen")
+            }
+        }
+    } else Column(modifier.fillMaxSize()) {
         Text(
             "Live APSRTC buses • native interactive map",
             Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp),
@@ -889,6 +910,10 @@ fun MapScreen(
                     label = { Text(option) },
                     modifier = Modifier.padding(end = 6.dp)
                 )
+            }
+            TextButton(onClick = { mapExpanded = true }) {
+                Icon(Icons.Default.Fullscreen, contentDescription = null)
+                Text("Expand map")
             }
         }
 
