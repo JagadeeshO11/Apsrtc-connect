@@ -20,8 +20,11 @@ data class Arrival(val tripId: String, val routeId: String, val stopId: String, 
 data class LiveFeedStatus(val feedTime: Long, val vehicles: Int, val onTrip: Int, val onRoute: Int, val tripUpdates: Int)
 
 class TransitRepository(private val context: Context) {
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).callTimeout(150, TimeUnit.SECONDS).build()
+    // Timetable archives can be large; live feeds must fail fast so the UI stays responsive.
+    private val archiveClient = OkHttpClient.Builder()
+        .connectTimeout(20, TimeUnit.SECONDS).readTimeout(90, TimeUnit.SECONDS).callTimeout(120, TimeUnit.SECONDS).build()
+    private val feedClient = OkHttpClient.Builder()
+        .connectTimeout(4, TimeUnit.SECONDS).readTimeout(5, TimeUnit.SECONDS).callTimeout(7, TimeUnit.SECONDS).build()
     private val prefs = context.getSharedPreferences("apsrtc_connect", Context.MODE_PRIVATE)
     private val base = "https://maps.reclaim.city"
 
@@ -30,7 +33,7 @@ class TransitRepository(private val context: Context) {
             .header("User-Agent", "APSRTC-Connect/1.2 (Android)")
             .header("Accept", "application/json").build()
         try {
-            client.newCall(request).execute().use { response ->
+            feedClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) return response.body?.string()
                     ?: error("Empty response from ${request.url.encodedPath}")
                 val code = response.code
@@ -94,7 +97,7 @@ class TransitRepository(private val context: Context) {
                     .header("User-Agent", "APSRTC-Connect/1.3 (Android)")
                     .header("Accept", "application/zip, application/octet-stream")
                     .build()
-                client.newCall(request).execute().use { response ->
+                archiveClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) throw java.io.IOException("HTTP ${response.code}")
                     val body = response.body ?: throw java.io.IOException("Empty download")
                     body.byteStream().use { input -> temp.outputStream().buffered().use { output -> input.copyTo(output) } }
