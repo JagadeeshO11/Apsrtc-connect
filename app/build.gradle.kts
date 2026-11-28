@@ -38,5 +38,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.11.0")
     implementation("com.google.android.gms:play-services-location:21.3.0")
+    // Native GPU-accelerated map renderer; OpenGL backend keeps broad Android device compatibility.
+    implementation("org.maplibre.gl:android-sdk-opengl:13.7.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
