@@ -568,45 +568,24 @@ fun ServiceDetailScreen(modifier: Modifier, journey: JourneyOption, liveBuses: L
 }
 
 private fun serviceRouteMapHtml(journey: JourneyOption, liveBus: LiveBus?): String {
-    // Some GTFS feeds contain placeholder (0,0) or invalid coordinates.
-    // Keep the full stop list in the UI, but draw the map from valid points only.
-    val validStops = journey.routeStops.filter { it.lat in -90.0..90.0 && it.lon in -180.0..180.0 && (it.lat != 0.0 || it.lon != 0.0) }
-    val points = com.google.gson.Gson().toJson(validStops.mapIndexed { index, stop ->
-        mapOf("lat" to stop.lat, "lon" to stop.lon, "name" to stop.name, "id" to stop.id,
-            "kind" to if (index == 0) "From" else if (index == validStops.lastIndex) "To" else "Stop")
-    })
+    val validStops = journey.routeStops.filter { it.lat in -85.0..85.0 && it.lon in -180.0..180.0 && (it.lat != 0.0 || it.lon != 0.0) }
+    val points = com.google.gson.Gson().toJson(validStops.mapIndexed { i, p -> mapOf("lat" to p.lat, "lon" to p.lon, "name" to p.name, "id" to p.id, "kind" to if(i==0) "From" else if(i==validStops.lastIndex) "To" else "Stop") })
     val liveJson = com.google.gson.Gson().toJson(liveBus?.let { mapOf("lat" to it.lat, "lon" to it.lon, "label" to it.label, "speed" to it.speed) })
-    return """<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <style>html,body,#map{height:100%;margin:0}.start{background:#087f5b;border:2px solid white;border-radius:50%;width:16px;height:16px}.mid{background:#315c8a;border:2px solid white;border-radius:50%;width:11px;height:11px}.end{background:#c2410c;border:2px solid white;border-radius:50%;width:16px;height:16px}</style></head><body><div id="map"></div><script>
-    const pts=$points; const live=$liveJson;
-    if(typeof L==='undefined'){
-      const root=document.getElementById('map'); root.style.cssText='height:100%;overflow:auto;padding:18px;box-sizing:border-box;background:#f4f7f5;font:14px sans-serif';
-      const title=document.createElement('div'); title.textContent='Route preview • map tiles unavailable'; title.style.cssText='font-weight:700;margin-bottom:14px;color:#123b43'; root.appendChild(title);
-      const list=document.createElement('div'); list.style.cssText='max-width:520px;margin:auto';
-      pts.forEach((p,i)=>{const row=document.createElement('div');row.style.cssText='display:flex;gap:12px;align-items:center;min-height:54px;border-bottom:1px solid #d6dfdc;padding:7px 4px';
-        const dot=document.createElement('span');dot.style.cssText='width:13px;height:13px;flex:none;border-radius:50%;background:'+(i===0?'#087f5b':i===pts.length-1?'#c2410c':'#315c8a');
-        const label=document.createElement('div');const name=document.createElement('div');name.textContent=(i+1)+'. '+p.name;name.style.fontWeight='600';
-        const id=document.createElement('small');id.textContent='GTFS stop ID: '+p.id;id.style.color='#59645f';label.append(name,id);row.append(dot,label);list.appendChild(row);});
-      root.appendChild(list);
-      if(live && Number.isFinite(live.lat) && Number.isFinite(live.lon)){
-        const liveRow=document.createElement('div'); liveRow.style.cssText='margin-top:16px;padding:12px;border-radius:10px;background:#e1f3ec;color:#075b42;font-weight:700';
-        liveRow.textContent='LIVE BUS: '+String(live.label)+' • '+(live.speed>0?(live.speed*3.6).toFixed(0)+' km/h':'speed unavailable');
-        root.appendChild(liveRow);
-      }
-    } else {
-      const map=L.map('map'); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
-      const coords=pts.map(p=>[p.lat,p.lon]); L.polyline(coords,{color:'#176b87',weight:5,opacity:.85}).addTo(map);
-      pts.forEach((p,i)=>{const cls=i===0?'start':i===pts.length-1?'end':'mid';const icon=L.divIcon({className:'',html:'<div class="'+cls+'"></div>',iconSize:[20,20],iconAnchor:[10,10]});L.marker([p.lat,p.lon],{icon}).addTo(map).bindPopup('<b>'+String(p.kind)+': '+String(p.name).replace(/[&<>"]/g,'')+'</b><br>GTFS stop: '+String(p.id));});
-      if(live && Number.isFinite(live.lat) && Number.isFinite(live.lon)){
-        const busIcon=L.divIcon({className:'',html:'<div style="width:22px;height:22px;background:#087f5b;border:3px solid white;border-radius:50%"></div>',iconSize:[28,28],iconAnchor:[14,14]});
-        L.marker([live.lat,live.lon],{icon:busIcon}).addTo(map).bindPopup('<b>LIVE BUS: '+String(live.label)+'</b><br>'+(live.speed>0?(live.speed*3.6).toFixed(0)+' km/h':'Speed unavailable'));
-        coords.push([live.lat,live.lon]);
-      }
-      if(coords.length) map.fitBounds(coords,{padding:[28,28],maxZoom:13});
-    }
-    </script></body></html>"""
+    return """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><style>
+    html,body,#map{height:100%;width:100%;margin:0;overflow:hidden;background:#e7efec;font:14px sans-serif}#tiles,#layer{position:absolute;inset:0;width:100%;height:100%}.tile{position:absolute;width:256px;height:256px}.note{position:absolute;z-index:5;bottom:10px;left:10px;padding:8px 11px;background:white;border-radius:9px;box-shadow:0 1px 5px #777}</style></head><body><div id="map"><div id="tiles"></div><svg id="layer"></svg><div class="note" id="note">Preparing route map…</div></div><script>
+    const pts=$points, live=$liveJson, root=document.getElementById('map'),tiles=document.getElementById('tiles'),svg=document.getElementById('layer');
+    const all=pts.slice();if(live)all.push(live);
+    function project(lat,lon,z){const n=2**z;return [(lon+180)/360*n*256,(1-Math.asinh(Math.tan(lat*Math.PI/180))/Math.PI)/2*n*256]}
+    function draw(){const w=root.clientWidth,h=root.clientHeight;if(!w||!h)return;if(!all.length){document.getElementById('note').textContent='No valid stop coordinates in this trip';return;}
+      const la=all.map(p=>p.lat),lo=all.map(p=>p.lon),span=Math.max(Math.max(...lo)-Math.min(...lo),(Math.max(...la)-Math.min(...la))*0.7,0.02),z=Math.max(6,Math.min(15,Math.floor(Math.log2(220/span))));
+      const c=project((Math.min(...la)+Math.max(...la))/2,(Math.min(...lo)+Math.max(...lo))/2,z),left=c[0]-w/2,top=c[1]-h/2;
+      tiles.innerHTML='';for(let x=Math.floor(left/256)-1;x<=Math.ceil((left+w)/256)+1;x++)for(let y=Math.floor(top/256)-1;y<=Math.ceil((top+h)/256)+1;y++){if(y<0||y>=2**z)continue;const im=document.createElement('img');im.className='tile';im.src='https://tile.openstreetmap.org/'+z+'/'+x+'/'+y+'.png';im.style.left=(x*256-left)+'px';im.style.top=(y*256-top)+'px';im.onerror=()=>im.style.display='none';tiles.appendChild(im);}
+      svg.setAttribute('viewBox','0 0 '+w+' '+h);svg.innerHTML='';const xy=p=>{const q=project(p.lat,p.lon,z);return [q[0]-left,q[1]-top]};
+      const ns='http://www.w3.org/2000/svg';if(pts.length>1){const pl=document.createElementNS(ns,'polyline');pl.setAttribute('points',pts.map(p=>xy(p).join(',')).join(' '));pl.setAttribute('fill','none');pl.setAttribute('stroke','#087f9b');pl.setAttribute('stroke-width','5');pl.setAttribute('stroke-linecap','round');svg.appendChild(pl);}
+      pts.forEach((p,i)=>{const q=xy(p),c=document.createElementNS(ns,'circle');c.setAttribute('cx',q[0]);c.setAttribute('cy',q[1]);c.setAttribute('r',i===0||i===pts.length-1?9:6);c.setAttribute('fill',i===0?'#087f5b':i===pts.length-1?'#c2410c':'#315c8a');c.setAttribute('stroke','white');c.setAttribute('stroke-width','3');svg.appendChild(c);});
+      if(live){const q=xy(live),c=document.createElementNS(ns,'circle');c.setAttribute('cx',q[0]);c.setAttribute('cy',q[1]);c.setAttribute('r',12);c.setAttribute('fill','#00a86b');c.setAttribute('stroke','white');c.setAttribute('stroke-width','4');svg.appendChild(c);}
+      document.getElementById('note').textContent=pts.length+' stops • '+(live?'LIVE BUS '+live.label:'Scheduled route')+' • © OpenStreetMap';
+    }window.addEventListener('resize',draw);draw();</script></body></html>"""
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -862,64 +841,22 @@ fun MapScreen(
 }
 
 private fun mapHtml(buses: List<LiveBus>, origin: Stop?, destination: Stop?, selected: LiveBus?, tripStops: List<Stop>): String {
-    val gson = com.google.gson.Gson()
-    val points = buses.map { bus -> mapOf(
-        "lat" to bus.lat, "lon" to bus.lon, "label" to bus.label,
-        "route" to bus.routeId, "tripId" to bus.tripId, "speed" to bus.speed, "time" to bus.timestamp
-    ) }
-    val markers = gson.toJson(points)
-    val journey = gson.toJson(listOfNotNull(
-        origin?.takeIf { it.lat in -90.0..90.0 && it.lon in -180.0..180.0 && (it.lat != 0.0 || it.lon != 0.0) }?.let { listOf(it.lat, it.lon, it.name, it.id, "From") },
-        destination?.takeIf { it.lat in -90.0..90.0 && it.lon in -180.0..180.0 && (it.lat != 0.0 || it.lon != 0.0) }?.let { listOf(it.lat, it.lon, it.name, it.id, "To") }
-    ))
-    val stopsJson = gson.toJson(tripStops.filter { it.lat in -90.0..90.0 && it.lon in -180.0..180.0 && (it.lat != 0.0 || it.lon != 0.0) }.mapIndexed { index, stop ->
-        mapOf("lat" to stop.lat, "lon" to stop.lon, "name" to stop.name, "id" to stop.id, "sequence" to index + 1)
-    })
-    val selectedTrip = gson.toJson(selected?.tripId.orEmpty())
-    return """<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <style>
-      html,body,#map{height:100%;width:100%;margin:0;background:#eef3f2}
-      .bus-dot{background:#b3261e;border:2px solid white;border-radius:50%;width:14px;height:14px;box-shadow:0 1px 6px #555}
-      .bus-dot.selected{background:#087f5b;width:19px;height:19px;border:3px solid white}
-      .endpoint{background:#315c8a;border:2px solid white;border-radius:50%;width:16px;height:16px}
-      .trip-stop{background:#e09f3e;border:2px solid white;border-radius:50%;width:12px;height:12px}
-      .map-note{position:absolute;z-index:500;bottom:12px;left:12px;background:#fff;padding:7px 10px;border-radius:9px;font:12px sans-serif;box-shadow:0 1px 5px #777}
-    </style></head><body><div id="map"></div><div class="map-note" id="note">Loading map…</div><script>
-    const pts=$markers, journey=$journey, stops=$stopsJson, selectedTrip=$selectedTrip;
-    const map=L.map('map',{zoomControl:true}).setView([16.5,80.6],7);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
-    const bounds=[];
-    const safe=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    let shown=0;
-    pts.forEach((p,i)=>{
-      if(!Number.isFinite(p.lat)||!Number.isFinite(p.lon)||p.lat < -90||p.lat > 90||p.lon < -180||p.lon > 180||(p.lat===0&&p.lon===0)) return;
-      const icon=L.divIcon({className:'',html:'<div class="bus-dot selected"></div>',iconSize:[24,24],iconAnchor:[12,12]});
-      const m=L.marker([p.lat,p.lon],{icon}).addTo(map);
-      m.bindPopup('<b>'+safe(p.label)+'</b><br>Route ID: '+safe(p.route||'Not matched')+'<br>Trip ID: '+safe(p.tripId||'Unavailable')+'<br>Speed: '+(p.speed>0?(p.speed*3.6).toFixed(0)+' km/h':'Unavailable')+'<br>Updated: '+(p.time?new Date(p.time*1000).toLocaleTimeString():'Unknown'));
-      m.on('click',()=>{if(window.AndroidBus&&window.AndroidBus.selectBus)window.AndroidBus.selectBus(i);});
-      bounds.push([p.lat,p.lon]); shown++;
-    });
-    if(stops.length){
-      const coords=stops.map(p=>[p.lat,p.lon]);
-      L.polyline(coords,{color:'#176b87',weight:5,opacity:.85}).addTo(map);
-      stops.forEach((p,i)=>{
-        const icon=L.divIcon({className:'',html:'<div class="trip-stop"></div>',iconSize:[16,16],iconAnchor:[8,8]});
-        L.marker([p.lat,p.lon],{icon}).addTo(map).bindPopup('<b>Stop '+p.sequence+': '+safe(p.name)+'</b><br>stop_id: '+safe(p.id));
-        bounds.push([p.lat,p.lon]);
-      });
-    }
-    journey.forEach(p=>{
-      if(!Number.isFinite(p[0])||!Number.isFinite(p[1])) return;
-      const icon=L.divIcon({className:'',html:'<div class="endpoint"></div>',iconSize:[20,20],iconAnchor:[10,10]});
-      L.marker([p[0],p[1]],{icon}).addTo(map).bindPopup('<b>'+safe(p[4])+': '+safe(p[2])+'</b><br>stop_id: '+safe(p[3]));
-      bounds.push([p[0],p[1]]);
-    });
-    document.getElementById('note').textContent=shown+' selected bus marker(s) • '+stops.length+' trip stops • '+(selectedTrip?'trip '+selectedTrip:'select a bus');
-    if(bounds.length) map.fitBounds(bounds,{padding:[28,28],maxZoom:13});
-    setTimeout(()=>map.invalidateSize(),250);
-    </script></body></html>"""
+    val gson=com.google.gson.Gson()
+    val markers=gson.toJson(buses.filter{it.lat in -85.0..85.0&&it.lon in -180.0..180.0&&(it.lat!=0.0||it.lon!=0.0)}.mapIndexed{i,b->mapOf("lat" to b.lat,"lon" to b.lon,"label" to b.label,"route" to b.routeId,"tripId" to b.tripId,"speed" to b.speed,"time" to b.timestamp,"index" to i)})
+    val stops=gson.toJson(tripStops.filter{it.lat in -85.0..85.0&&it.lon in -180.0..180.0&&(it.lat!=0.0||it.lon!=0.0)}.map{mapOf("lat" to it.lat,"lon" to it.lon,"name" to it.name,"id" to it.id)})
+    val ends=gson.toJson(listOfNotNull(origin,destination).filter{it.lat in -85.0..85.0&&it.lon in -180.0..180.0&&(it.lat!=0.0||it.lon!=0.0)}.map{mapOf("lat" to it.lat,"lon" to it.lon,"name" to it.name)})
+    return """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><style>html,body,#map{height:100%;width:100%;margin:0;overflow:hidden;background:#e7efec;font:14px sans-serif}#tiles,#layer{position:absolute;inset:0;width:100%;height:100%}.tile{position:absolute;width:256px;height:256px}.note{position:absolute;z-index:5;bottom:10px;left:10px;padding:8px 11px;background:white;border-radius:9px;box-shadow:0 1px 5px #777}</style></head><body><div id="map"><div id="tiles"></div><svg id="layer"></svg><div class="note" id="note">Loading live bus positions…</div></div><script>
+    const buses=$markers,stops=$stops,ends=$ends,all=[...buses,...stops,...ends],root=document.getElementById('map'),tiles=document.getElementById('tiles'),svg=document.getElementById('layer');
+    function project(lat,lon,z){const n=2**z;return [(lon+180)/360*n*256,(1-Math.asinh(Math.tan(lat*Math.PI/180))/Math.PI)/2*n*256]}
+    function draw(){const w=root.clientWidth,h=root.clientHeight;if(!w||!h)return;if(!all.length){document.getElementById('note').textContent='No live GPS positions received. Pull to refresh.';return;}
+      const la=all.map(p=>p.lat),lo=all.map(p=>p.lon),span=Math.max(Math.max(...lo)-Math.min(...lo),(Math.max(...la)-Math.min(...la))*0.7,0.2),z=Math.max(5,Math.min(13,Math.floor(Math.log2(220/span)))),c=project((Math.min(...la)+Math.max(...la))/2,(Math.min(...lo)+Math.max(...lo))/2,z),left=c[0]-w/2,top=c[1]-h/2;
+      tiles.innerHTML='';for(let x=Math.floor(left/256)-1;x<=Math.ceil((left+w)/256)+1;x++)for(let y=Math.floor(top/256)-1;y<=Math.ceil((top+h)/256)+1;y++){if(y<0||y>=2**z)continue;const im=document.createElement('img');im.className='tile';im.src='https://tile.openstreetmap.org/'+z+'/'+x+'/'+y+'.png';im.style.left=(x*256-left)+'px';im.style.top=(y*256-top)+'px';im.onerror=()=>im.style.display='none';tiles.appendChild(im);}
+      svg.setAttribute('viewBox','0 0 '+w+' '+h);svg.innerHTML='';const ns='http://www.w3.org/2000/svg',xy=p=>{const q=project(p.lat,p.lon,z);return [q[0]-left,q[1]-top]};
+      stops.forEach(p=>{const q=xy(p),c=document.createElementNS(ns,'circle');c.setAttribute('cx',q[0]);c.setAttribute('cy',q[1]);c.setAttribute('r',5);c.setAttribute('fill','#e09f3e');c.setAttribute('stroke','white');c.setAttribute('stroke-width','2');svg.appendChild(c);});
+      ends.forEach(p=>{const q=xy(p),c=document.createElementNS(ns,'circle');c.setAttribute('cx',q[0]);c.setAttribute('cy',q[1]);c.setAttribute('r',9);c.setAttribute('fill','#315c8a');c.setAttribute('stroke','white');c.setAttribute('stroke-width','3');svg.appendChild(c);});
+      buses.forEach(p=>{const q=xy(p),c=document.createElementNS(ns,'circle');c.setAttribute('cx',q[0]);c.setAttribute('cy',q[1]);c.setAttribute('r',7);c.setAttribute('fill','#087f5b');c.setAttribute('stroke','white');c.setAttribute('stroke-width','3');c.style.pointerEvents='all';c.addEventListener('click',()=>{if(window.AndroidBus)AndroidBus.selectBus(p.index)});svg.appendChild(c);});
+      document.getElementById('note').textContent=buses.length+' live buses • '+stops.length+' trip stops • © OpenStreetMap';
+    }window.addEventListener('resize',draw);draw();</script></body></html>"""
 }
 
 @Composable
