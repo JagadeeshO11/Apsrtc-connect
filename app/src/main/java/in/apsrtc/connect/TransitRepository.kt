@@ -306,7 +306,7 @@ class TransitRepository(private val context: Context) {
     suspend fun feedStatus(): LiveFeedStatus = withContext(Dispatchers.IO) {
         val json = JsonParser.parseString(getCached("feed_status", "$base/apsrtc/rt/status.json", 20_000L)).asJsonObject
         LiveFeedStatus(
-            feedTime = json.get("feed_time")?.asLong ?: 0L,
+            feedTime = json.get("feed_time")?.asLong ?: json.get("t")?.asLong ?: 0L,
             vehicles = json.get("vehicles")?.asInt ?: 0,
             onTrip = json.get("on_trip")?.asInt ?: 0,
             onRoute = json.get("on_route")?.asInt ?: 0,
