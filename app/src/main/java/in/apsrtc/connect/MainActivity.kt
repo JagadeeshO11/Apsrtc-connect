@@ -29,6 +29,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -133,10 +134,14 @@ fun APSRTCApp() {
             val failures = mutableListOf<String>()
             var positionsOk = false
             var sourceStatus: LiveFeedStatus? = null
-            runCatching { repo.feedStatus() }
+            // Fetch independent feeds together: one slow endpoint must not block the others.
+            val statusTask = async { runCatching { repo.feedStatus() } }
+            val vehiclesTask = async { runCatching { repo.liveBuses(routes) } }
+            val arrivalsTask = async { runCatching { repo.arrivals() } }
+            statusTask.await()
                 .onSuccess { sourceStatus = it }
                 .onFailure { failures += "Feed status: ${it.message ?: "unavailable"}" }
-            runCatching { repo.liveBuses(routes) }
+            vehiclesTask.await()
                 .onSuccess { fresh ->
                     buses = fresh; repo.saveLiveBuses(fresh); positionsOk = true
                     val newest = fresh.maxOfOrNull { it.timestamp } ?: sourceStatus?.feedTime ?: 0L
@@ -147,7 +152,7 @@ fun APSRTCApp() {
                     }
                 }
                 .onFailure { failures += "Vehicle feed: ${it.message ?: "network error"}"; if (buses.isEmpty()) buses = repo.cachedLiveBuses() }
-            runCatching { repo.arrivals() }
+            arrivalsTask.await()
                 .onSuccess { fresh -> arrivals = fresh; repo.saveArrivals(fresh) }
                 .onFailure { failures += "Arrival feed: ${it.message ?: "network error"}"; if (arrivals.isEmpty()) arrivals = repo.cachedArrivals() }
             val feedAge = sourceStatus?.feedTime?.let { (System.currentTimeMillis() / 1000L - it).coerceAtLeast(0L) }
