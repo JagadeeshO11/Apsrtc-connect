@@ -773,21 +773,32 @@ fun MapScreen(
     var busType by remember { mutableStateOf("All services") }
     var sortBy by remember { mutableStateOf("Latest update") }
     var timeWindow by remember { mutableStateOf("All times") }
-    // GTFS route IDs can differ in case/format from IDs in the live feed; index common aliases too.
     val routeById = remember(routes) {
         buildMap {
             routes.forEach { route ->
-                val aliases = listOf(route.id, route.shortName, route.id.filter { it.isLetterOrDigit() }, route.shortName.filter { it.isLetterOrDigit() })
+                val aliases = listOf(
+                    route.id, route.shortName, route.longName,
+                    route.id.filter { it.isLetterOrDigit() },
+                    route.shortName.filter { it.isLetterOrDigit() }
+                )
                 aliases.filter { it.isNotBlank() }.forEach { alias ->
+                    val normalized = alias.trim().lowercase(Locale.ROOT)
                     put(alias, route)
-                    put(alias.lowercase(Locale.ROOT), route)
-                    put(alias.filter { it.isLetterOrDigit() }.lowercase(Locale.ROOT), route)
+                    put(normalized, route)
+                    put(normalized.filter { it.isLetterOrDigit() }, route)
                 }
             }
         }
     }
-    val serviceTypes = listOf("Palle Velugu", "Ultra Palle Velugu", "Express", "Metro Express", "City Ordinary", "Super Luxury", "Ultra Deluxe", "Deluxe", "Garuda", "Garuda Plus", "Indra", "Amaravathi", "Vennela", "Semi Luxury", "AC Service", "Other")
-    val busCounts = remember(buses, routes) { buses.groupingBy { apsrtcServiceClass(it, routeById) }.eachCount() }
+    val serviceTypes = listOf(
+        "Palle Velugu", "Ultra Palle Velugu", "Express", "Metro Express",
+        "City Ordinary", "Super Luxury", "Ultra Deluxe", "Deluxe",
+        "Garuda", "Garuda Plus", "Indra", "Amaravathi", "Vennela",
+        "Semi Luxury", "AC Service", "Other"
+    )
+    val busCounts = remember(buses, routes) {
+        buses.groupingBy { apsrtcServiceClass(it, routeById) }.eachCount()
+    }
     val filtered = buses.filter { bus ->
         val serviceClass = apsrtcServiceClass(bus, routeById)
         val typeMatch = busType == "All services" || serviceClass == busType
@@ -807,84 +818,120 @@ fun MapScreen(
             else -> list.sortedByDescending { it.timestamp }
         }
     }
-    val visibleBuses = if (selected != null) listOf(filtered.firstOrNull { it.id == selected.id } ?: selected) else filtered
+    val selectedInFilter = selected?.let { chosen -> filtered.firstOrNull { it.id == chosen.id } }
+    val visibleBuses = if (selectedInFilter != null) listOf(selectedInFilter) else filtered
+
     Column(modifier.fillMaxSize()) {
-        Text("Live APSRTC buses • interactive map", Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Text(if (selected != null) "Selected trip only • ${selected.tripId.ifBlank { "Trip ID unavailable" }}" else "All available live vehicle positions • select a bus to isolate its trip", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
-        Text(if (lastUpdated > 0L) "GPS last updated ${SimpleDateFormat("dd MMM, hh:mm:ss a", Locale.getDefault()).format(Date(lastUpdated * 1000))}" else "Waiting for first GPS timestamp", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            FilterChip(selected = busType == "All services", onClick = { busType = "All services" }, label = { Text("All services • ${buses.size}") }, modifier = Modifier.padding(end = 6.dp))
-            serviceTypes.filter { (busCounts[it] ?: 0) > 0 || busType == it }.forEach { type ->
-                FilterChip(selected = busType == type, onClick = { busType = type }, label = { Text("$type • ${busCounts[type] ?: 0}") }, modifier = Modifier.padding(end = 6.dp))
+        Text(
+            "Live APSRTC buses • native interactive map",
+            Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            if (selectedInFilter != null) "Selected trip only • ${selectedInFilter.tripId.ifBlank { "Trip ID unavailable" }}"
+            else "All available live vehicle positions • tap a bus marker to track one trip",
+            Modifier.padding(horizontal = 16.dp),
+            style = MaterialTheme.typography.bodySmall
+        )
+        Text(
+            if (lastUpdated > 0L) "GPS last updated ${SimpleDateFormat("dd MMM, hh:mm:ss a", Locale.getDefault()).format(Date(lastUpdated * 1000))}"
+            else "Waiting for first GPS timestamp",
+            Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            FilterChip(
+                selected = busType == "All services",
+                onClick = { busType = "All services"; onSelect(null) },
+                label = { Text("All services • ${buses.size}") },
+                modifier = Modifier.padding(end = 6.dp)
+            )
+            // Keep every APSRTC category selectable, including categories with zero current GPS buses.
+            serviceTypes.forEach { type ->
+                FilterChip(
+                    selected = busType == type,
+                    onClick = { busType = type; onSelect(null) },
+                    label = { Text("$type • ${busCounts[type] ?: 0}") },
+                    modifier = Modifier.padding(end = 6.dp)
+                )
             }
         }
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text("Departure:", style = MaterialTheme.typography.labelMedium)
             Spacer(Modifier.width(6.dp))
             listOf("All times", "00:00–06:00", "06:00–12:00", "12:00–18:00", "18:00–24:00").forEach { window ->
-                FilterChip(selected = timeWindow == window, onClick = { timeWindow = window }, label = { Text(window) }, modifier = Modifier.padding(end = 6.dp))
+                FilterChip(
+                    selected = timeWindow == window,
+                    onClick = { timeWindow = window; onSelect(null) },
+                    label = { Text(window) },
+                    modifier = Modifier.padding(end = 6.dp)
+                )
             }
         }
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text("Sort:", style = MaterialTheme.typography.labelMedium)
             Spacer(Modifier.width(8.dp))
             listOf("Latest update", "Fastest", "Route").forEach { option ->
-                FilterChip(selected = sortBy == option, onClick = { sortBy = option }, label = { Text(option) }, modifier = Modifier.padding(end = 6.dp))
+                FilterChip(
+                    selected = sortBy == option,
+                    onClick = { sortBy = option },
+                    label = { Text(option) },
+                    modifier = Modifier.padding(end = 6.dp)
+                )
             }
         }
-        AndroidView(
+
+        MapLibreBusMap(
             modifier = Modifier.weight(1f).fillMaxWidth(),
-            factory = { ctx ->
-                WebView(ctx).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = false
-                    settings.allowFileAccess = false
-                    settings.allowContentAccess = false
-                    settings.javaScriptCanOpenWindowsAutomatically = false
-                    settings.setSupportMultipleWindows(false)
-                    settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                    addJavascriptInterface(object {
-                        @android.webkit.JavascriptInterface
-                        fun selectBus(index: Int) {
-                            this@apply.post { onSelect(visibleBuses.getOrNull(index)) }
-                        }
-                    }, "AndroidBus")
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean =
-                            request?.isForMainFrame == true
-                    }
-                    val html = mapHtml(visibleBuses, origin, destination, selected, selectedTripStops)
-                    tag = html.hashCode()
-                    loadDataWithBaseURL("https://www.openstreetmap.org", html, "text/html", "UTF-8", null)
-                }
-            },
-            update = { view ->
-                val html = mapHtml(visibleBuses, origin, destination, selected, selectedTripStops)
-                if (view.tag != html.hashCode()) {
-                    view.addJavascriptInterface(object {
-                        @android.webkit.JavascriptInterface
-                        fun selectBus(index: Int) {
-                            view.post { onSelect(visibleBuses.getOrNull(index)) }
-                        }
-                    }, "AndroidBus")
-                    view.tag = html.hashCode()
-                    view.loadDataWithBaseURL("https://www.openstreetmap.org", html, "text/html", "UTF-8", null)
-                }
-            }
+            buses = visibleBuses,
+            tripStops = if (selectedInFilter != null) selectedTripStops else emptyList(),
+            origin = origin,
+            destination = destination,
+            selected = selectedInFilter,
+            onSelect = onSelect
         )
-        if (selected != null) {
-            val route = routeById[selected.routeId]
+
+        if (selectedInFilter != null) {
+            val route = routeById[selectedInFilter.routeId]
             Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
                 ListItem(
-                    headlineContent = { Text(selected.label) },
-                    supportingContent = { Text("Route: ${route?.shortName ?: selected.routeId.ifBlank { "Unavailable" }} • Trip ID: ${selected.tripId.ifBlank { "Unavailable" }} • ${selectedTripStops.size} GTFS stops") },
-                    trailingContent = { IconButton(onClick = { onSelect(null) }) { Icon(Icons.Default.Close, "Show all buses") } }
+                    headlineContent = { Text(selectedInFilter.label) },
+                    supportingContent = {
+                        Text(
+                            "Route: ${route?.shortName ?: selectedInFilter.routeId.ifBlank { "Unavailable" }} • Trip ID: ${selectedInFilter.tripId.ifBlank { "Unavailable" }} • ${selectedTripStops.size} GTFS stops"
+                        )
+                    },
+                    trailingContent = {
+                        IconButton(onClick = { onSelect(null) }) {
+                            Icon(Icons.Default.Close, "Show all buses")
+                        }
+                    }
                 )
             }
             if (selectedTripStops.isEmpty()) {
-                Text("No matching GTFS stop sequence was found for this live trip ID.", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "No matching GTFS stop sequence was found for this live trip ID.",
+                    Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.bodySmall
+                )
             } else {
-                Text("Stops on selected trip", Modifier.padding(start = 16.dp, top = 4.dp), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                Text(
+                    "Stops on selected trip",
+                    Modifier.padding(start = 16.dp, top = 4.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
                 LazyColumn(Modifier.heightIn(max = 145.dp).fillMaxWidth()) {
                     items(selectedTripStops) { stop ->
                         ListItem(
@@ -897,51 +944,40 @@ fun MapScreen(
                 }
             }
         } else if (visibleBuses.isNotEmpty()) {
-            Text("Tap a bus marker or row to show only that bus and its trip stops", Modifier.padding(start = 16.dp, top = 6.dp), style = MaterialTheme.typography.labelMedium)
+            Text(
+                "Tap a bus marker or row to show only that bus and its trip stops",
+                Modifier.padding(start = 16.dp, top = 6.dp),
+                style = MaterialTheme.typography.labelMedium
+            )
             LazyColumn(Modifier.heightIn(max = 180.dp).fillMaxWidth()) {
                 items(visibleBuses.take(80)) { bus ->
                     val route = routeById[bus.routeId]
                     ListItem(
                         modifier = Modifier.clickable { onSelect(bus) },
                         headlineContent = { Text(bus.label) },
-                        supportingContent = { Text("${route?.shortName ?: bus.routeId.ifBlank { "Route not matched" }} • Trip: ${bus.tripId.ifBlank { "unknown" }} • ${if (bus.speed > 0) "${"%.0f".format(bus.speed * 3.6)} km/h" else "Speed unavailable"}") },
+                        supportingContent = {
+                            Text(
+                                "${route?.shortName ?: bus.routeId.ifBlank { "Route not matched" }} • Trip: ${bus.tripId.ifBlank { "unknown" }} • ${if (bus.speed > 0) "${"%.0f".format(bus.speed * 3.6)} km/h" else "Speed unavailable"}"
+                            )
+                        },
                         trailingContent = { Icon(Icons.Default.ChevronRight, null) }
                     )
                     HorizontalDivider()
                 }
             }
         } else {
-            Text("No live vehicle positions in this filter. Try All or clear the selected bus.", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
+            Text(
+                "No live vehicle positions in this filter. Choose All services or another category.",
+                Modifier.padding(16.dp),
+                style = MaterialTheme.typography.bodySmall
+            )
         }
-        Text("${visibleBuses.size} shown / ${buses.size} live positions • Auto-refresh every 30 seconds • © OpenStreetMap", Modifier.padding(12.dp), style = MaterialTheme.typography.labelSmall)
+        Text(
+            "${visibleBuses.size} shown / ${buses.size} live positions • Auto-refresh every 30 seconds",
+            Modifier.padding(12.dp),
+            style = MaterialTheme.typography.labelSmall
+        )
     }
-}
-
-private fun mapHtml(buses: List<LiveBus>, origin: Stop?, destination: Stop?, selected: LiveBus?, tripStops: List<Stop>): String {
-    val gson=com.google.gson.Gson()
-    val markers=gson.toJson(buses.filter{it.lat in -85.0..85.0&&it.lon in -180.0..180.0&&(it.lat!=0.0||it.lon!=0.0)}.mapIndexed{i,b->mapOf("lat" to b.lat,"lon" to b.lon,"label" to b.label,"route" to b.routeId,"tripId" to b.tripId,"speed" to b.speed,"time" to b.timestamp,"index" to i)})
-    val stops=gson.toJson(tripStops.filter{it.lat in -85.0..85.0&&it.lon in -180.0..180.0&&(it.lat!=0.0||it.lon!=0.0)}.map{mapOf("lat" to it.lat,"lon" to it.lon,"name" to it.name,"id" to it.id)})
-    val ends=gson.toJson(listOfNotNull(origin,destination).filter{it.lat in -85.0..85.0&&it.lon in -180.0..180.0&&(it.lat!=0.0||it.lon!=0.0)}.map{mapOf("lat" to it.lat,"lon" to it.lon,"name" to it.name)})
-    val staticItems = buses.filter{it.lat in -85.0..85.0&&it.lon in -180.0..180.0&&(it.lat!=0.0||it.lon!=0.0)}.map{Triple(it.lon,it.lat,"#087f5b")} +
-        tripStops.filter{it.lat in -85.0..85.0&&it.lon in -180.0..180.0&&(it.lat!=0.0||it.lon!=0.0)}.map{Triple(it.lon,it.lat,"#e09f3e")} +
-        listOfNotNull(origin,destination).filter{it.lat in -85.0..85.0&&it.lon in -180.0..180.0&&(it.lat!=0.0||it.lon!=0.0)}.map{Triple(it.lon,it.lat,"#315c8a")}
-    val minLon=(staticItems.minOfOrNull{it.first}?:0.0)-0.02; val maxLon=(staticItems.maxOfOrNull{it.first}?:1.0)+0.02
-    val minLat=(staticItems.minOfOrNull{it.second}?:0.0)-0.02; val maxLat=(staticItems.maxOfOrNull{it.second}?:1.0)+0.02
-    fun sx(lon:Double)=40.0+((lon-minLon)/(maxLon-minLon).coerceAtLeast(0.001))*920.0
-    fun sy(lat:Double):Double { fun merc(v:Double):Double { val r=Math.toRadians(v.coerceIn(-85.0,85.0)); return ln(tan(Math.PI/4.0+r/2.0)) }; val lo=merc(minLat);val hi=merc(maxLat);return 40.0+((hi-merc(lat))/(hi-lo).coerceAtLeast(0.001))*520.0 }
-    val svgFallback=buildString { staticItems.forEachIndexed{i,p->append("<circle cx=\"").append(sx(p.first)).append("\" cy=\"").append(sy(p.second)).append("\" r=\"").append(if(i<buses.size) 13 else 9).append("\" fill=\"").append(p.third).append("\" stroke=\"white\" stroke-width=\"4\"/>")} }
-    return """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><style>html,body,#map{height:100%;width:100%;margin:0;overflow:hidden;background:#e7efec;font:14px sans-serif}#tiles,#layer{position:absolute;inset:0;width:100%;height:100%;transform-origin:0 0;touch-action:none}.tile{position:absolute;width:256px;height:256px}.note{position:absolute;z-index:5;bottom:10px;left:10px;padding:8px 11px;background:white;border-radius:9px;box-shadow:0 1px 5px #777}</style></head><body><div id="map"><div id="tiles"></div><svg id="layer" viewBox="0 0 1000 600" preserveAspectRatio="none">$svgFallback</svg><div class="note" id="note">Loading live bus positions…</div></div><script>
-    const buses=$markers,stops=$stops,ends=$ends,all=[...buses,...stops,...ends],root=document.getElementById('map'),tiles=document.getElementById('tiles'),svg=document.getElementById('layer');
-    function project(lat,lon,z){const n=2**z;return [(lon+180)/360*n*256,(1-Math.asinh(Math.tan(lat*Math.PI/180))/Math.PI)/2*n*256]}
-    function draw(){const w=root.clientWidth,h=root.clientHeight;if(!w||!h)return;if(!all.length){document.getElementById('note').textContent='No live GPS positions received. Pull to refresh.';return;}
-      const la=all.map(p=>p.lat),lo=all.map(p=>p.lon),span=Math.max(Math.max(...lo)-Math.min(...lo),(Math.max(...la)-Math.min(...la))*0.7,0.2),z=Math.max(5,Math.min(13,Math.floor(Math.log2(220/span)))),c=project((Math.min(...la)+Math.max(...la))/2,(Math.min(...lo)+Math.max(...lo))/2,z),left=c[0]-w/2,top=c[1]-h/2;
-      tiles.innerHTML='';for(let x=Math.floor(left/256)-1;x<=Math.ceil((left+w)/256)+1;x++)for(let y=Math.floor(top/256)-1;y<=Math.ceil((top+h)/256)+1;y++){if(y<0||y>=2**z)continue;const im=document.createElement('img');im.className='tile';im.src='https://tile.openstreetmap.org/'+z+'/'+x+'/'+y+'.png';im.style.left=(x*256-left)+'px';im.style.top=(y*256-top)+'px';im.onerror=()=>{const next=Number(im.dataset.fallback||0)+1;im.dataset.fallback=String(next);if(next===1)im.src='https://tile.openstreetmap.de/'+z+'/'+x+'/'+y+'.png';else if(next===2)im.src='https://basemaps.cartocdn.com/light_all/'+z+'/'+x+'/'+y+'.png';else im.style.display='none';};tiles.appendChild(im);}
-      svg.setAttribute('viewBox','0 0 '+w+' '+h);svg.innerHTML='';const ns='http://www.w3.org/2000/svg',xy=p=>{const q=project(p.lat,p.lon,z);return [q[0]-left,q[1]-top]};
-      stops.forEach(p=>{const q=xy(p),c=document.createElementNS(ns,'circle');c.setAttribute('cx',q[0]);c.setAttribute('cy',q[1]);c.setAttribute('r',5);c.setAttribute('fill','#e09f3e');c.setAttribute('stroke','white');c.setAttribute('stroke-width','2');svg.appendChild(c);});
-      ends.forEach(p=>{const q=xy(p),c=document.createElementNS(ns,'circle');c.setAttribute('cx',q[0]);c.setAttribute('cy',q[1]);c.setAttribute('r',9);c.setAttribute('fill','#315c8a');c.setAttribute('stroke','white');c.setAttribute('stroke-width','3');svg.appendChild(c);});
-      buses.forEach(p=>{const q=xy(p),c=document.createElementNS(ns,'circle');c.setAttribute('cx',q[0]);c.setAttribute('cy',q[1]);c.setAttribute('r',7);c.setAttribute('fill','#087f5b');c.setAttribute('stroke','white');c.setAttribute('stroke-width','3');c.style.pointerEvents='all';c.addEventListener('click',()=>{if(window.AndroidBus)AndroidBus.selectBus(p.index)});svg.appendChild(c);});
-      document.getElementById('note').textContent=buses.length+' live buses • '+stops.length+' trip stops • © OpenStreetMap';
-    }let drag=null,offsetX=0,offsetY=0,scale=1;function applyView(){const t='translate('+offsetX+'px,'+offsetY+'px) scale('+scale+')';tiles.style.transform=t;svg.style.transform=t;}root.addEventListener('pointerdown',e=>{if(e.target&&e.target.closest&&e.target.closest('circle'))return;drag={x:e.clientX-offsetX,y:e.clientY-offsetY};root.setPointerCapture(e.pointerId);});root.addEventListener('pointermove',e=>{if(!drag)return;offsetX=e.clientX-drag.x;offsetY=e.clientY-drag.y;applyView();});function stopDrag(){drag=null;}root.addEventListener('pointerup',stopDrag);root.addEventListener('pointercancel',stopDrag);root.addEventListener('wheel',e=>{e.preventDefault();scale=Math.max(0.7,Math.min(3,scale*(e.deltaY<0?1.15:0.87)));applyView();},{passive:false});window.addEventListener('resize',draw);draw();</script></body></html>\"\"\"
 }
 
 @Composable
