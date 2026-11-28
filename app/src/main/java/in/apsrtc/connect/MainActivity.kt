@@ -33,6 +33,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.ln
+import kotlin.math.tan
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -714,8 +716,16 @@ fun LiveScreen(modifier: Modifier, status: String, buses: List<LiveBus>, arrival
     }
 }
 
-private fun apsrtcServiceClass(route: BusRoute): String {
-    val name = "${route.shortName} ${route.longName} ${route.id}".lowercase(Locale.ROOT)
+private fun apsrtcServiceClass(route: BusRoute): String =
+    apsrtcServiceClassName("${route.shortName} ${route.longName} ${route.id}")
+
+private fun apsrtcServiceClass(bus: LiveBus, routeById: Map<String, BusRoute>): String {
+    val route = routeById[bus.routeId]
+    return apsrtcServiceClassName(listOf(bus.routeName, bus.routeLongName, bus.routeId, route?.shortName.orEmpty(), route?.longName.orEmpty()).joinToString(" "))
+}
+
+private fun apsrtcServiceClassName(rawName: String): String {
+    val name = rawName.lowercase(Locale.ROOT).replace('_', ' ').replace('-', ' ')
     return when {
         Regex("\\bgaruda\\s*plus\\b").containsMatchIn(name) -> "Garuda Plus"
         Regex("\\bgaruda\\b").containsMatchIn(name) -> "Garuda"
@@ -745,11 +755,22 @@ fun MapScreen(
 ) {
     var busType by remember { mutableStateOf("All services") }
     var sortBy by remember { mutableStateOf("Latest update") }
+    var timeWindow by remember { mutableStateOf("All times") }
     val routeById = remember(routes) { routes.associateBy { it.id } }
-    val availableTypes = buses.mapNotNull { bus -> routeById[bus.routeId]?.let { apsrtcServiceClass(it) } }.distinct().sorted()
+    val serviceTypes = listOf("Palle Velugu", "Ultra Palle Velugu", "Express", "Metro Express", "City Ordinary", "Super Luxury", "Ultra Deluxe", "Deluxe", "Garuda", "Garuda Plus", "Indra", "Amaravathi", "Vennela", "Semi Luxury", "AC Service", "Other")
+    val busCounts = remember(buses, routes) { buses.groupingBy { apsrtcServiceClass(it, routeById) }.eachCount() }
     val filtered = buses.filter { bus ->
-        val serviceClass = routeById[bus.routeId]?.let { apsrtcServiceClass(it) } ?: "Other"
-        busType == "All services" || serviceClass == busType
+        val serviceClass = apsrtcServiceClass(bus, routeById)
+        val typeMatch = busType == "All services" || serviceClass == busType
+        val hour = bus.startTime.substringBefore(":").toIntOrNull()
+        val timeMatch = when (timeWindow) {
+            "00:00–06:00" -> hour in 0..5
+            "06:00–12:00" -> hour in 6..11
+            "12:00–18:00" -> hour in 12..17
+            "18:00–24:00" -> hour in 18..23
+            else -> true
+        }
+        typeMatch && timeMatch
     }.let { list ->
         when (sortBy) {
             "Fastest" -> list.sortedByDescending { it.speed }
@@ -764,10 +785,15 @@ fun MapScreen(
         Text(if (lastUpdated > 0L) "GPS last updated ${SimpleDateFormat("dd MMM, hh:mm:ss a", Locale.getDefault()).format(Date(lastUpdated * 1000))}" else "Waiting for first GPS timestamp", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             FilterChip(selected = busType == "All services", onClick = { busType = "All services" }, label = { Text("All services • ${buses.size}") }, modifier = Modifier.padding(end = 6.dp))
-            availableTypes.forEach { type ->
-                val busCount = buses.count { bus -> routeById[bus.routeId]?.let { apsrtcServiceClass(it) } == type }
-                val routeCount = routes.count { apsrtcServiceClass(it) == type }
-                FilterChip(selected = busType == type, onClick = { busType = type }, label = { Text("$type • $busCount buses / $routeCount routes") }, modifier = Modifier.padding(end = 6.dp))
+            serviceTypes.filter { (busCounts[it] ?: 0) > 0 || busType == it }.forEach { type ->
+                FilterChip(selected = busType == type, onClick = { busType = type }, label = { Text("$type • ${busCounts[type] ?: 0}") }, modifier = Modifier.padding(end = 6.dp))
+            }
+        }
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Departure:", style = MaterialTheme.typography.labelMedium)
+            Spacer(Modifier.width(6.dp))
+            listOf("All times", "00:00–06:00", "06:00–12:00", "12:00–18:00", "18:00–24:00").forEach { window ->
+                FilterChip(selected = timeWindow == window, onClick = { timeWindow = window }, label = { Text(window) }, modifier = Modifier.padding(end = 6.dp))
             }
         }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
