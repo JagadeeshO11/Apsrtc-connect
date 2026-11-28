@@ -444,10 +444,10 @@ fun JourneyResultsScreen(
         val typeMatch = selectedRouteType == null || apsrtcServiceClass(journey.route) == selectedRouteType
         val hour = (((journey.departureMinutes % 1440) + 1440) % 1440) / 60
         val timeMatch = when (selectedTimeWindow) {
-            "00:00–06:00" -> hour != null && hour in 0..5
-            "06:00–12:00" -> hour != null && hour in 6..11
-            "12:00–18:00" -> hour != null && hour in 12..17
-            "18:00–24:00" -> hour != null && hour in 18..23
+            "00:00–06:00" -> hour in 0..5
+            "06:00–12:00" -> hour in 6..11
+            "12:00–18:00" -> hour in 12..17
+            "18:00–24:00" -> hour in 18..23
             else -> true
         }
         typeMatch && timeMatch
