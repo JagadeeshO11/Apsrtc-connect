@@ -514,7 +514,7 @@ fun ServiceDetailScreen(modifier: Modifier, journey: JourneyOption) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(journey.route.shortName.ifBlank { journey.route.id }, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Text(journey.route.longName.ifBlank { "APSRTC scheduled service" }, style = MaterialTheme.typography.bodyMedium)
-            Text("\${journey.departure} → \${journey.arrival} • \${journey.durationMinutes} min", style = MaterialTheme.typography.titleMedium)
+            Text("${journey.departure} → ${journey.arrival} • ${journey.durationMinutes} min", style = MaterialTheme.typography.titleMedium)
             Text("Map shows only this selected trip segment, from the chosen origin to destination.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         val mapStops = stops.filter { it.lat in -90.0..90.0 && it.lon in -180.0..180.0 && (it.lat != 0.0 || it.lon != 0.0) }
@@ -554,7 +554,7 @@ fun ServiceDetailScreen(modifier: Modifier, journey: JourneyOption) {
             items(stops) { stop ->
                 ListItem(
                     headlineContent = { Text(stop.name) },
-                    supportingContent = { Text("GTFS stop ID: \${stop.id}") },
+                    supportingContent = { Text("GTFS stop ID: ${stop.id}") },
                     leadingContent = { Icon(Icons.Default.Place, null) },
                     trailingContent = { Text(if (stop == stops.first()) "FROM" else if (stop == stops.last()) "TO" else "STOP") }
                 )
@@ -577,10 +577,22 @@ private fun serviceRouteMapHtml(journey: JourneyOption): String {
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>html,body,#map{height:100%;margin:0}.start{background:#087f5b;border:2px solid white;border-radius:50%;width:16px;height:16px}.mid{background:#315c8a;border:2px solid white;border-radius:50%;width:11px;height:11px}.end{background:#c2410c;border:2px solid white;border-radius:50%;width:16px;height:16px}</style></head><body><div id="map"></div><script>
-    const pts=$points; const map=L.map('map'); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
-    const coords=pts.map(p=>[p.lat,p.lon]); L.polyline(coords,{color:'#176b87',weight:5,opacity:.85}).addTo(map);
-    pts.forEach((p,i)=>{const cls=i===0?'start':i===pts.length-1?'end':'mid';const icon=L.divIcon({className:'',html:'<div class="'+cls+'"></div>',iconSize:[20,20],iconAnchor:[10,10]});L.marker([p.lat,p.lon],{icon}).addTo(map).bindPopup('<b>'+String(p.kind)+': '+String(p.name).replace(/[&<>"]/g,'')+'</b><br>GTFS stop: '+String(p.id));});
-    if(coords.length) map.fitBounds(coords,{padding:[28,28],maxZoom:13});
+    const pts=$points;
+    if(typeof L==='undefined'){
+      const root=document.getElementById('map'); root.style.cssText='height:100%;overflow:auto;padding:18px;box-sizing:border-box;background:#f4f7f5;font:14px sans-serif';
+      const title=document.createElement('div'); title.textContent='Route preview • map tiles unavailable'; title.style.cssText='font-weight:700;margin-bottom:14px;color:#123b43'; root.appendChild(title);
+      const list=document.createElement('div'); list.style.cssText='max-width:520px;margin:auto';
+      pts.forEach((p,i)=>{const row=document.createElement('div');row.style.cssText='display:flex;gap:12px;align-items:center;min-height:54px;border-bottom:1px solid #d6dfdc;padding:7px 4px';
+        const dot=document.createElement('span');dot.style.cssText='width:13px;height:13px;flex:none;border-radius:50%;background:'+(i===0?'#087f5b':i===pts.length-1?'#c2410c':'#315c8a');
+        const label=document.createElement('div');const name=document.createElement('div');name.textContent=(i+1)+'. '+p.name;name.style.fontWeight='600';
+        const id=document.createElement('small');id.textContent='GTFS stop ID: '+p.id;id.style.color='#59645f';label.append(name,id);row.append(dot,label);list.appendChild(row);});
+      root.appendChild(list);
+    } else {
+      const map=L.map('map'); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+      const coords=pts.map(p=>[p.lat,p.lon]); L.polyline(coords,{color:'#176b87',weight:5,opacity:.85}).addTo(map);
+      pts.forEach((p,i)=>{const cls=i===0?'start':i===pts.length-1?'end':'mid';const icon=L.divIcon({className:'',html:'<div class="'+cls+'"></div>',iconSize:[20,20],iconAnchor:[10,10]});L.marker([p.lat,p.lon],{icon}).addTo(map).bindPopup('<b>'+String(p.kind)+': '+String(p.name).replace(/[&<>"]/g,'')+'</b><br>GTFS stop: '+String(p.id));});
+      if(coords.length) map.fitBounds(coords,{padding:[28,28],maxZoom:13});
+    }
     </script></body></html>"""
 }
 
